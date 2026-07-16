@@ -84,12 +84,17 @@ public final class StorageSearchScreen extends Screen {
         for (int index = 0; index < visibleSuggestions.size(); index++) {
             Suggestion suggestion = visibleSuggestions.get(index);
             int rowY = listY + index * ROW_HEIGHT;
-            int background = index == selectedSuggestion ? 0xEE355A7A : 0xEE1B2430;
+            Integer searchColor = StorageFinderClient.searchColor(suggestion.stack());
+            int background = index == selectedSuggestion ? 0xEE355A7A
+                    : searchColor != null ? 0xEE24382F : 0xEE1B2430;
             graphics.fill(fieldX, rowY, fieldX + fieldWidth, rowY + ROW_HEIGHT - 1, background);
             graphics.outline(fieldX, rowY, fieldWidth, ROW_HEIGHT - 1,
-                    index == selectedSuggestion ? 0xFF70C7FF : 0xFF394554);
+                    index == selectedSuggestion ? 0xFF70C7FF
+                            : searchColor != null ? searchColor : 0xFF394554);
             graphics.item(suggestion.icon(), fieldX + 3, rowY + 2);
-            graphics.text(this.font, suggestion.label(), fieldX + 24, rowY + 7, 0xFFFFFFFF);
+            Component label = searchColor == null ? suggestion.label()
+                    : Component.translatable("storagefinder.search.active", suggestion.label());
+            graphics.text(this.font, label, fieldX + 24, rowY + 7, 0xFFFFFFFF);
         }
         if (visibleSuggestions.isEmpty() && !searchBox.getValue().isBlank()) {
             graphics.centeredText(this.font, Component.translatable("storagefinder.search.no_results"),
@@ -184,7 +189,9 @@ public final class StorageSearchScreen extends Screen {
         visibleSuggestions = catalog.stream()
                 .filter(suggestion -> needle.isEmpty()
                         || suggestion.label().getString().toLowerCase(Locale.ROOT).contains(needle))
-                .sorted(Comparator.comparingInt((Suggestion suggestion) -> matchRank(suggestion, needle))
+                .sorted(Comparator.comparingInt((Suggestion suggestion) ->
+                                StorageFinderClient.searchColor(suggestion.stack()) == null ? 1 : 0)
+                        .thenComparingInt(suggestion -> matchRank(suggestion, needle))
                         .thenComparing(suggestion -> suggestion.label().getString(), String.CASE_INSENSITIVE_ORDER))
                 .limit(visibleRows)
                 .toList();

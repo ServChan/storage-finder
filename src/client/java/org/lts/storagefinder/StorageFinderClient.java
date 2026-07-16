@@ -173,15 +173,20 @@ public final class StorageFinderClient implements ClientModInitializer {
 
     public static void selectFromSearch(ItemStack stack, Component displayName) {
         Minecraft minecraft = Minecraft.getInstance();
-        SELECTION.clear();
         SearchSelection.Change change = SELECTION.toggle(stack);
-        LOGGER.info("Text search selected {} as {}", displayName.getString(), SearchSelection.itemIds(stack));
+        LOGGER.info("Text search {} {} as {}", change.added() ? "selected" : "removed",
+                displayName.getString(), SearchSelection.itemIds(stack));
         if (minecraft.player != null && StorageFinderConfig.current().showMessages) {
-            minecraft.player.sendOverlayMessage(Component.translatable(
-                    change.added() ? "storagefinder.selected.added" : "storagefinder.selected.already_selected",
-                    displayName, String.format("%06X", change.color() & 0xFFFFFF)));
+            minecraft.player.sendOverlayMessage(change.added()
+                    ? Component.translatable("storagefinder.selected.added", displayName,
+                            String.format("%06X", change.color() & 0xFFFFFF))
+                    : Component.translatable("storagefinder.selected.removed", displayName));
         }
         LOCATOR.refresh(minecraft, SELECTION, INDEX);
+    }
+
+    public static Integer searchColor(ItemStack stack) {
+        return SELECTION.colorFor(stack);
     }
 
     public static void clearSearch() {

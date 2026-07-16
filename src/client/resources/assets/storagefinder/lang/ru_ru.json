@@ -35,6 +35,7 @@
   "storagefinder.search.enchanted_book": "Зачарованная книга — %s",
   "storagefinder.search.duplicate": "%s (%s)",
   "storagefinder.search.no_results": "Совпадений не найдено",
+  "storagefinder.search.active": "✓ %s — нажмите, чтобы удалить",
   "storagefinder.search.clear": "Очистить поиск",
   "storagefinder.search.cancel": "Отмена",
   "modmenu.nameTranslation.storagefinder": "Поиск хранилищ",

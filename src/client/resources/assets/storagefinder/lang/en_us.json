@@ -35,6 +35,7 @@
   "storagefinder.search.enchanted_book": "Enchanted Book — %s",
   "storagefinder.search.duplicate": "%s (%s)",
   "storagefinder.search.no_results": "No matches found",
+  "storagefinder.search.active": "✓ %s — click to remove",
   "storagefinder.search.clear": "Clear search",
   "storagefinder.search.cancel": "Cancel",
   "modmenu.nameTranslation.storagefinder": "Storage Finder",

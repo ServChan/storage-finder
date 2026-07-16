@@ -51,6 +51,14 @@ public final class SearchSelection {
         return selected.isEmpty();
     }
 
+    public Integer colorFor(ItemStack stack) {
+        return itemIds(stack).stream()
+                .map(selected::get)
+                .filter(java.util.Objects::nonNull)
+                .findFirst()
+                .orElse(null);
+    }
+
     public Map<String, Integer> entries() {
         return Collections.unmodifiableMap(selected);
     }
