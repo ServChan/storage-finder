@@ -28,6 +28,7 @@ dependencies {
     implementation "net.fabricmc:fabric-loader:${project.loader_version}"
     implementation "net.fabricmc.fabric-api:fabric-lifecycle-events-v1:${project.fabric_lifecycle_events_version}"
     implementation "net.fabricmc.fabric-api:fabric-rendering-v1:${project.fabric_rendering_version}"
+    implementation "net.fabricmc.fabric-api:fabric-key-mapping-api-v1:${project.fabric_key_mapping_api_version}"
     compileOnly("com.terraformersmc:modmenu:${project.modmenu_version}") {
         transitive = false
     }

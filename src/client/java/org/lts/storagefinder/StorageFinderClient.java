@@ -4,15 +4,19 @@ import com.mojang.blaze3d.platform.InputConstants;
 import net.fabricmc.api.ClientModInitializer;
 import net.fabricmc.fabric.api.client.event.lifecycle.v1.ClientTickEvents;
 import net.fabricmc.fabric.api.client.event.lifecycle.v1.ClientLifecycleEvents;
+import net.fabricmc.fabric.api.client.keymapping.v1.KeyMappingHelper;
 import net.fabricmc.fabric.api.client.rendering.v1.level.LevelRenderEvents;
+import net.minecraft.client.KeyMapping;
 import net.minecraft.client.Minecraft;
 import net.minecraft.client.gui.screens.inventory.AbstractContainerScreen;
 import net.minecraft.client.multiplayer.ClientLevel;
 import net.minecraft.core.BlockPos;
 import net.minecraft.network.chat.Component;
+import net.minecraft.resources.Identifier;
 import net.minecraft.world.inventory.ChestMenu;
 import net.minecraft.world.item.ItemStack;
 import org.lts.storagefinder.gui.StorageSearchScreen;
+import org.lwjgl.glfw.GLFW;
 
 import java.util.LinkedHashSet;
 import java.util.Set;
@@ -22,6 +26,8 @@ import org.slf4j.LoggerFactory;
 public final class StorageFinderClient implements ClientModInitializer {
     public static final String MOD_ID = "storagefinder";
     public static final Logger LOGGER = LoggerFactory.getLogger(MOD_ID);
+    private static final KeyMapping.Category KEY_CATEGORY = KeyMapping.Category.register(
+            Identifier.fromNamespaceAndPath(MOD_ID, "main"));
     private static final SearchSelection SELECTION = new SearchSelection();
     private static final StorageIndex INDEX = new StorageIndex();
     private static final StorageLocator LOCATOR = new StorageLocator();
@@ -33,13 +39,18 @@ public final class StorageFinderClient implements ClientModInitializer {
     private static String activeScope;
     private static boolean activeContentsChanged;
     private static ClientLevel lastLevel;
-    private static boolean rightAltWasDown;
+    private static KeyMapping searchKey;
     private static int ticks;
 
     @Override
     public void onInitializeClient() {
         StorageFinderConfig.load();
         INDEX.load();
+        searchKey = KeyMappingHelper.registerKeyMapping(new KeyMapping(
+                "key.storagefinder.search",
+                InputConstants.Type.KEYSYM,
+                GLFW.GLFW_KEY_RIGHT_ALT,
+                KEY_CATEGORY));
         ClientTickEvents.END_CLIENT_TICK.register(StorageFinderClient::onTick);
         ClientLifecycleEvents.CLIENT_STOPPING.register(StorageFinderClient::saveAndClearActiveContainer);
         LevelRenderEvents.BEFORE_GIZMOS.register(context -> StorageRenderer.render(LOCATOR));
@@ -67,7 +78,7 @@ public final class StorageFinderClient implements ClientModInitializer {
             }
             lastLevel = minecraft.level;
         }
-        handleRightAlt(minecraft);
+        handleSearchKey(minecraft);
         if (config.enabled && config.indexContainers) {
             observeContainer(minecraft);
         } else {
@@ -85,10 +96,12 @@ public final class StorageFinderClient implements ClientModInitializer {
         }
     }
 
-    private static void handleRightAlt(Minecraft minecraft) {
-        boolean down = InputConstants.isKeyDown(minecraft.getWindow(), InputConstants.KEY_RALT);
+    private static void handleSearchKey(Minecraft minecraft) {
         StorageFinderConfig config = StorageFinderConfig.current();
-        if (config.enabled && down && !rightAltWasDown && minecraft.screen == null && minecraft.player != null) {
+        while (searchKey.consumeClick()) {
+            if (!config.enabled || minecraft.screen != null || minecraft.player == null) {
+                continue;
+            }
             ItemStack held = minecraft.player.getMainHandItem();
             if (held.isEmpty()) {
                 minecraft.setScreen(new StorageSearchScreen());
@@ -106,7 +119,6 @@ public final class StorageFinderClient implements ClientModInitializer {
                 LOCATOR.refresh(minecraft, SELECTION, INDEX);
             }
         }
-        rightAltWasDown = down;
     }
 
     private static void observeContainer(Minecraft minecraft) {

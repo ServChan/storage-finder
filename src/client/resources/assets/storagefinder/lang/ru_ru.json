@@ -1,4 +1,6 @@
 {
+  "key.categories.storagefinder.main": "Поиск хранилищ",
+  "key.storagefinder.search": "Найти или отключить поиск предмета",
   "storagefinder.selected.added": "§aПоиск: §f%s §7(цвет #%s)",
   "storagefinder.selected.removed": "§eУбрано из поиска: §f%s",
   "storagefinder.selected.already_selected": "§7Уже ищем: §f%s §7(цвет #%s)",
@@ -20,7 +22,7 @@
   "storagefinder.config.messages": "Уведомления: %s",
   "storagefinder.config.radius": "Радиус: %s чанков (%s блоков)",
   "storagefinder.config.radius_hint": "Радиус ограничен восемью чанками",
-  "storagefinder.config.hotkey_hint": "Поиск: предмет в руке + правая Alt; пустая рука открывает ввод",
+  "storagefinder.config.hotkey_hint": "Клавиша поиска настраивается в управлении; пустая рука открывает ввод",
   "storagefinder.config.on": "Да",
   "storagefinder.config.off": "Нет",
   "storagefinder.config.defaults": "По умолчанию",

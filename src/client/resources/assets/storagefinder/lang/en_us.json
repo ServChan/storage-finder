@@ -1,4 +1,6 @@
 {
+  "key.categories.storagefinder.main": "Storage Finder",
+  "key.storagefinder.search": "Find item or remove search",
   "storagefinder.selected.added": "§aSearching for: §f%s §7(color #%s)",
   "storagefinder.selected.removed": "§eRemoved from search: §f%s",
   "storagefinder.selected.already_selected": "§7Already searching for: §f%s §7(color #%s)",
@@ -20,7 +22,7 @@
   "storagefinder.config.messages": "Notifications: %s",
   "storagefinder.config.radius": "Radius: %s chunks (%s blocks)",
   "storagefinder.config.radius_hint": "The radius is capped at eight chunks",
-  "storagefinder.config.hotkey_hint": "Search: held item + Right Alt; an empty hand opens text search",
+  "storagefinder.config.hotkey_hint": "Configure the search key in Controls; an empty hand opens text search",
   "storagefinder.config.on": "On",
   "storagefinder.config.off": "Off",
   "storagefinder.config.defaults": "Defaults",
