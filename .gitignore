@@ -1,0 +1,40 @@
+# Gradle
+.gradle/
+build/
+out/
+
+# Local run directories
+run/
+runs/
+logs/
+crash-reports/
+
+# IDE
+.idea/
+.vscode/
+*.iml
+*.ipr
+*.iws
+.project
+.classpath
+.settings/
+
+# OS/editor files
+.DS_Store
+Thumbs.db
+Desktop.ini
+*.swp
+*.swo
+*~
+
+# Local secrets and overrides
+.env
+.env.*
+local.properties
+gradle-local.properties
+
+# Generated artifacts
+*.log
+*.tmp
+hs_err_pid*
+replay_pid*

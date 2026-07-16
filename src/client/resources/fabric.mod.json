@@ -1,0 +1,27 @@
+{
+  "schemaVersion": 1,
+  "id": "storagefinder",
+  "version": "${version}",
+  "name": "Storage Finder",
+  "description": "Find nearby storage by item frames and remembered container contents, with colored highlights and routes.",
+  "authors": ["LTS_Server"],
+  "license": "MIT",
+  "environment": "client",
+  "entrypoints": {
+    "client": ["org.lts.storagefinder.StorageFinderClient"],
+    "modmenu": ["org.lts.storagefinder.compat.StorageFinderModMenu"]
+  },
+  "mixins": [
+    { "config": "storagefinder.client.mixins.json", "environment": "client" }
+  ],
+  "depends": {
+    "fabricloader": ">=0.19.3",
+    "minecraft": "26.1.2",
+    "java": ">=25",
+    "fabric-lifecycle-events-v1": "*",
+    "fabric-rendering-v1": "*"
+  },
+  "suggests": {
+    "modmenu": "*"
+  }
+}
