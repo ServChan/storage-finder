@@ -6,6 +6,7 @@ import net.fabricmc.fabric.api.client.event.lifecycle.v1.ClientTickEvents;
 import net.fabricmc.fabric.api.client.event.lifecycle.v1.ClientLifecycleEvents;
 import net.fabricmc.fabric.api.client.keymapping.v1.KeyMappingHelper;
 import net.fabricmc.fabric.api.client.rendering.v1.level.LevelRenderEvents;
+import net.fabricmc.fabric.api.client.rendering.v1.hud.HudElementRegistry;
 import net.minecraft.client.KeyMapping;
 import net.minecraft.client.Minecraft;
 import net.minecraft.client.gui.screens.inventory.AbstractContainerScreen;
@@ -60,6 +61,9 @@ public final class StorageFinderClient implements ClientModInitializer {
         ClientTickEvents.END_CLIENT_TICK.register(StorageFinderClient::onTick);
         ClientLifecycleEvents.CLIENT_STOPPING.register(StorageFinderClient::saveAndClearActiveContainer);
         LevelRenderEvents.BEFORE_GIZMOS.register(context -> StorageRenderer.render(LOCATOR));
+        HudElementRegistry.addLast(
+                Identifier.fromNamespaceAndPath(MOD_ID, "active_searches"),
+                (graphics, frame) -> StorageHudRenderer.render(Minecraft.getInstance(), graphics));
         LOGGER.info("Storage Finder initialized");
     }
 
@@ -100,6 +104,9 @@ public final class StorageFinderClient implements ClientModInitializer {
                 LOCATOR.clear();
             }
         }
+        if (config.enabled) {
+            LOCATOR.tickRoutes(minecraft);
+        }
     }
 
     private static void handleSearchKey(Minecraft minecraft) {
@@ -112,15 +119,16 @@ public final class StorageFinderClient implements ClientModInitializer {
             if (held.isEmpty()) {
                 minecraft.setScreen(new StorageSearchScreen());
             } else {
-                SearchSelection.Change change = SELECTION.toggle(held);
+                Component displayName = SearchSelection.displayName(held);
+                SearchSelection.Change change = SELECTION.toggle(held, displayName);
                 LOGGER.info("Held search {} {} as {}", change.added() ? "selected" : "removed",
-                        held.getHoverName().getString(), SearchSelection.itemIds(held));
+                        displayName.getString(), SearchSelection.itemIds(held));
                 if (config.showMessages && change.added()) {
                     minecraft.player.sendOverlayMessage(Component.translatable(
-                            "storagefinder.selected.added", held.getHoverName(), String.format("%06X", change.color() & 0xFFFFFF)));
+                            "storagefinder.selected.added", displayName, String.format("%06X", change.color() & 0xFFFFFF)));
                 } else if (config.showMessages) {
                     minecraft.player.sendOverlayMessage(Component.translatable(
-                            "storagefinder.selected.removed", held.getHoverName()));
+                            "storagefinder.selected.removed", displayName));
                 }
                 LOCATOR.refresh(minecraft, SELECTION, INDEX);
             }
@@ -218,7 +226,7 @@ public final class StorageFinderClient implements ClientModInitializer {
 
     public static void selectFromSearch(ItemStack stack, Component displayName) {
         Minecraft minecraft = Minecraft.getInstance();
-        SearchSelection.Change change = SELECTION.toggle(stack);
+        SearchSelection.Change change = SELECTION.toggle(stack, displayName);
         LOGGER.info("Text search {} {} as {}", change.added() ? "selected" : "removed",
                 displayName.getString(), SearchSelection.itemIds(stack));
         if (minecraft.player != null && StorageFinderConfig.current().showMessages) {
@@ -232,6 +240,14 @@ public final class StorageFinderClient implements ClientModInitializer {
 
     public static Integer searchColor(ItemStack stack) {
         return SELECTION.colorFor(stack);
+    }
+
+    public static java.util.List<SearchSelection.Query> activeQueries() {
+        return SELECTION.queries();
+    }
+
+    public static java.util.Map<Integer, StorageLocator.QueryStats> queryStats() {
+        return LOCATOR.queryStats();
     }
 
     public static void clearSearch() {

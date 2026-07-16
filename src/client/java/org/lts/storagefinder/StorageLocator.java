@@ -20,10 +20,13 @@ import java.util.Set;
 public final class StorageLocator {
     private static final int MAX_ROUTES_PER_COLOR = 3;
     private static final int FAILED_ROUTE_RETRY_REFRESHES = 10;
+    private static final int ROUTE_NODE_BUDGET_PER_TICK = 800;
     private final Map<BlockPos, List<Integer>> matches = new LinkedHashMap<>();
     private final Map<Integer, List<Route>> routesByColor = new LinkedHashMap<>();
     private final Map<Integer, String> routeDiagnostics = new HashMap<>();
     private final Map<Integer, FailedRouteAttempt> failedRouteAttempts = new HashMap<>();
+    private final Map<Integer, List<BlockPos>> latestCandidatesByColor = new LinkedHashMap<>();
+    private final Map<Integer, RouteJob> routeJobs = new LinkedHashMap<>();
     private long refreshSerial;
 
     public void clear() {
@@ -31,6 +34,8 @@ public final class StorageLocator {
         routesByColor.clear();
         routeDiagnostics.clear();
         failedRouteAttempts.clear();
+        latestCandidatesByColor.clear();
+        routeJobs.clear();
     }
 
     public void refresh(Minecraft minecraft, SearchSelection selection, StorageIndex index) {
@@ -40,6 +45,8 @@ public final class StorageLocator {
             routesByColor.clear();
             routeDiagnostics.clear();
             failedRouteAttempts.clear();
+            latestCandidatesByColor.clear();
+            routeJobs.clear();
             return;
         }
 
@@ -112,6 +119,16 @@ public final class StorageLocator {
         return routesByColor;
     }
 
+    public Map<Integer, QueryStats> queryStats() {
+        Map<Integer, QueryStats> stats = new LinkedHashMap<>();
+        for (Map.Entry<Integer, List<BlockPos>> entry : latestCandidatesByColor.entrySet()) {
+            stats.put(entry.getKey(), new QueryStats(entry.getValue().size(),
+                    routesByColor.getOrDefault(entry.getKey(), List.of()).size(),
+                    routeJobs.containsKey(entry.getKey())));
+        }
+        return Map.copyOf(stats);
+    }
+
     public static boolean isStorage(Minecraft minecraft, BlockPos pos) {
         if (minecraft.level == null) {
             return false;
@@ -141,19 +158,45 @@ public final class StorageLocator {
     }
 
     private void updateRoutes(Minecraft minecraft, Map<Integer, List<BlockPos>> candidatesByColor) {
+        latestCandidatesByColor.clear();
+        candidatesByColor.forEach((color, candidates) ->
+                latestCandidatesByColor.put(color, List.copyOf(candidates)));
         if (!StorageFinderConfig.current().routeEnabled) {
             routesByColor.clear();
             routeDiagnostics.clear();
             failedRouteAttempts.clear();
+            routeJobs.clear();
             return;
         }
         routesByColor.keySet().removeIf(color -> !candidatesByColor.containsKey(color));
         routeDiagnostics.keySet().removeIf(color -> !candidatesByColor.containsKey(color));
         failedRouteAttempts.keySet().removeIf(color -> !candidatesByColor.containsKey(color));
+        routeJobs.keySet().removeIf(color -> !candidatesByColor.containsKey(color));
         BlockPos start = minecraft.player.blockPosition();
         for (Map.Entry<Integer, List<BlockPos>> entry : candidatesByColor.entrySet()) {
             List<BlockPos> candidates = entry.getValue();
             candidates.sort(Comparator.comparingDouble(pos -> pos.distSqr(start)));
+            latestCandidatesByColor.put(entry.getKey(), List.copyOf(candidates));
+
+            RouteJob existingJob = routeJobs.get(entry.getKey());
+            if (existingJob != null && existingJob.matches(start, candidates)) {
+                continue;
+            }
+            routeJobs.remove(entry.getKey());
+
+            List<Route> cached = routesByColor.get(entry.getKey());
+            if (cached != null && !cached.isEmpty()) {
+                List<Route> rebased = rebaseCachedRoutes(minecraft, cached, candidates, start);
+                if (rebased.size() == cached.size()) {
+                    routesByColor.put(entry.getKey(), rebased);
+                    if (refreshSerial - cached.getFirst().createdAtRefresh < 10) {
+                        continue;
+                    }
+                } else {
+                    routesByColor.remove(entry.getKey());
+                }
+            }
+
             FailedRouteAttempt failedAttempt = failedRouteAttempts.get(entry.getKey());
             if (failedAttempt != null
                     && refreshSerial - failedAttempt.createdAtRefresh < FAILED_ROUTE_RETRY_REFRESHES
@@ -162,39 +205,71 @@ public final class StorageLocator {
                 routesByColor.remove(entry.getKey());
                 continue;
             }
-            List<Route> cached = routesByColor.get(entry.getKey());
-            if (cached != null && !cached.isEmpty() && refreshSerial - cached.getFirst().createdAtRefresh < 10) {
-                List<Route> rebased = rebaseCachedRoutes(minecraft, cached, candidates, start);
-                if (rebased.size() == cached.size()) {
-                    routesByColor.put(entry.getKey(), rebased);
+            if (candidates.isEmpty()) {
+                routesByColor.remove(entry.getKey());
+                failedRouteAttempts.remove(entry.getKey());
+                logRouteState(entry.getKey(), 0, 0);
+                continue;
+            }
+            routeJobs.put(entry.getKey(), new RouteJob(start, candidates));
+        }
+    }
+
+    public void tickRoutes(Minecraft minecraft) {
+        if (minecraft.level == null || minecraft.player == null
+                || !StorageFinderConfig.current().routeEnabled) {
+            routeJobs.clear();
+            return;
+        }
+        if (routeJobs.isEmpty()) {
+            return;
+        }
+
+        int budgetPerJob = Math.max(64, ROUTE_NODE_BUDGET_PER_TICK / routeJobs.size());
+        for (Integer color : new ArrayList<>(routeJobs.keySet())) {
+            RouteJob job = routeJobs.get(color);
+            if (job == null) {
+                continue;
+            }
+            if (job.search == null) {
+                if (job.found.size() >= MAX_ROUTES_PER_COLOR || job.remaining.isEmpty()) {
+                    finishRouteJob(color, job);
+                    continue;
+                }
+                job.search = RouteFinder.begin(minecraft, job.start, job.remaining);
+                if (job.search == null) {
+                    finishRouteJob(color, job);
                     continue;
                 }
             }
 
-            List<Route> found = new ArrayList<>();
-            List<BlockPos> remaining = new ArrayList<>(candidates);
-            for (int routeIndex = 0; routeIndex < MAX_ROUTES_PER_COLOR && !remaining.isEmpty(); routeIndex++) {
-                RouteFinder.Result result = RouteFinder.findAny(minecraft, start, remaining);
-                if (result == null) {
-                    break;
+            RouteFinder.StepStatus status = job.search.step(minecraft, budgetPerJob);
+            if (status == RouteFinder.StepStatus.FOUND) {
+                RouteFinder.Result result = job.search.result();
+                job.found.add(new Route(job.start, result.target().immutable(),
+                        result.path(), refreshSerial));
+                job.remaining.removeIf(pos -> pos.equals(result.target()));
+                job.search = null;
+                if (job.found.size() >= MAX_ROUTES_PER_COLOR || job.remaining.isEmpty()) {
+                    finishRouteJob(color, job);
                 }
-                found.add(new Route(start.immutable(), result.target().immutable(), result.path(), refreshSerial));
-                remaining.removeIf(pos -> pos.equals(result.target()));
+            } else if (status == RouteFinder.StepStatus.FAILED) {
+                finishRouteJob(color, job);
             }
-            if (!found.isEmpty()) {
-                routesByColor.put(entry.getKey(), List.copyOf(found));
-                failedRouteAttempts.remove(entry.getKey());
-            } else {
-                routesByColor.remove(entry.getKey());
-                if (!candidates.isEmpty()) {
-                    failedRouteAttempts.put(entry.getKey(), new FailedRouteAttempt(
-                            start.immutable(), List.copyOf(candidates), refreshSerial));
-                } else {
-                    failedRouteAttempts.remove(entry.getKey());
-                }
-            }
-            logRouteState(entry.getKey(), candidates.size(), found.size());
         }
+    }
+
+    private void finishRouteJob(int color, RouteJob job) {
+        routeJobs.remove(color);
+        if (job.found.isEmpty()) {
+            routesByColor.remove(color);
+            failedRouteAttempts.put(color, new FailedRouteAttempt(
+                    job.start, job.candidates, refreshSerial));
+        } else {
+            routesByColor.put(color, List.copyOf(job.found));
+            failedRouteAttempts.remove(color);
+        }
+        logRouteState(color, job.candidates.size(), job.found.size());
     }
 
     private void logRouteState(int color, int candidates, int routes) {
@@ -232,6 +307,27 @@ public final class StorageLocator {
     }
 
     public record Route(BlockPos start, BlockPos target, List<BlockPos> path, long createdAtRefresh) {
+    }
+
+    public record QueryStats(int matches, int routes, boolean searching) {
+    }
+
+    private static final class RouteJob {
+        private final BlockPos start;
+        private final List<BlockPos> candidates;
+        private final List<BlockPos> remaining;
+        private final List<Route> found = new ArrayList<>();
+        private RouteFinder.Search search;
+
+        private RouteJob(BlockPos start, List<BlockPos> candidates) {
+            this.start = start.immutable();
+            this.candidates = List.copyOf(candidates);
+            this.remaining = new ArrayList<>(candidates);
+        }
+
+        private boolean matches(BlockPos currentStart, List<BlockPos> currentCandidates) {
+            return start.equals(currentStart) && candidates.equals(currentCandidates);
+        }
     }
 
     private record FailedRouteAttempt(BlockPos start, List<BlockPos> candidates, long createdAtRefresh) {

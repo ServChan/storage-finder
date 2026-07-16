@@ -31,7 +31,7 @@ public final class RouteFinder {
     private RouteFinder() {
     }
 
-    public static Result findAny(Minecraft minecraft, BlockPos requestedStart, List<BlockPos> storages) {
+    public static Search begin(Minecraft minecraft, BlockPos requestedStart, List<BlockPos> storages) {
         if (minecraft.level == null || minecraft.player == null) {
             return null;
         }
@@ -61,41 +61,90 @@ public final class RouteFinder {
         minY -= VERTICAL_MARGIN;
         maxY += VERTICAL_MARGIN;
 
-        PriorityQueue<Node> open = new PriorityQueue<>((a, b) -> Double.compare(a.estimatedTotal, b.estimatedTotal));
-        Map<BlockPos, Double> bestCost = new HashMap<>();
-        Map<BlockPos, BlockPos> cameFrom = new HashMap<>();
-        Set<BlockPos> closed = new HashSet<>();
-        bestCost.put(start, 0.0);
-        open.add(new Node(start, heuristic(start, goalOwners.keySet())));
+        return new Search(minecraft.level, start, goalOwners, minY, maxY);
+    }
 
-        int visited = 0;
-        while (!open.isEmpty() && visited++ < MAX_VISITED) {
-            Node node = open.poll();
-            BlockPos current = node.pos;
-            if (!closed.add(current)) {
-                continue;
+    public static final class Search {
+        private final ClientLevel level;
+        private final BlockPos start;
+        private final Map<BlockPos, BlockPos> goalOwners;
+        private final int minY;
+        private final int maxY;
+        private final PriorityQueue<Node> open = new PriorityQueue<>(
+                (a, b) -> Double.compare(a.estimatedTotal, b.estimatedTotal));
+        private final Map<BlockPos, Double> bestCost = new HashMap<>();
+        private final Map<BlockPos, BlockPos> cameFrom = new HashMap<>();
+        private final Set<BlockPos> closed = new HashSet<>();
+        private int visited;
+        private StepStatus status = StepStatus.RUNNING;
+        private Result result;
+
+        private Search(ClientLevel level, BlockPos start, Map<BlockPos, BlockPos> goalOwners,
+                       int minY, int maxY) {
+            this.level = level;
+            this.start = start;
+            this.goalOwners = Map.copyOf(goalOwners);
+            this.minY = minY;
+            this.maxY = maxY;
+            bestCost.put(start, 0.0);
+            open.add(new Node(start, heuristic(start, goalOwners.keySet())));
+        }
+
+        public StepStatus step(Minecraft minecraft, int nodeBudget) {
+            if (status != StepStatus.RUNNING) {
+                return status;
             }
-            BlockPos target = goalOwners.get(current);
-            if (target != null) {
-                return new Result(target, reconstruct(cameFrom, current));
+            if (minecraft.level != level || minecraft.player == null) {
+                status = StepStatus.FAILED;
+                return status;
             }
 
-            double currentCost = bestCost.getOrDefault(current, Double.POSITIVE_INFINITY);
-            for (BlockPos next : neighbours(minecraft, current, start, minY, maxY)) {
-                if (closed.contains(next)) {
+            int processed = 0;
+            int budget = Math.max(1, nodeBudget);
+            while (!open.isEmpty() && visited < MAX_VISITED && processed++ < budget) {
+                visited++;
+                Node node = open.poll();
+                BlockPos current = node.pos;
+                if (!closed.add(current)) {
                     continue;
                 }
-                double rise = Math.max(0.0, surfaceY(minecraft, next) - surfaceY(minecraft, current));
-                double stepCost = 1.0 + rise * 0.25;
-                double candidateCost = currentCost + stepCost;
-                if (candidateCost < bestCost.getOrDefault(next, Double.POSITIVE_INFINITY)) {
-                    bestCost.put(next, candidateCost);
-                    cameFrom.put(next, current);
-                    open.add(new Node(next, candidateCost + heuristic(next, goalOwners.keySet())));
+                BlockPos target = goalOwners.get(current);
+                if (target != null) {
+                    result = new Result(target, reconstruct(cameFrom, current));
+                    status = StepStatus.FOUND;
+                    return status;
+                }
+
+                double currentCost = bestCost.getOrDefault(current, Double.POSITIVE_INFINITY);
+                for (BlockPos next : neighbours(minecraft, current, start, minY, maxY)) {
+                    if (closed.contains(next)) {
+                        continue;
+                    }
+                    double rise = Math.max(0.0, surfaceY(minecraft, next) - surfaceY(minecraft, current));
+                    double stepCost = 1.0 + rise * 0.25;
+                    double candidateCost = currentCost + stepCost;
+                    if (candidateCost < bestCost.getOrDefault(next, Double.POSITIVE_INFINITY)) {
+                        bestCost.put(next, candidateCost);
+                        cameFrom.put(next, current);
+                        open.add(new Node(next, candidateCost + heuristic(next, goalOwners.keySet())));
+                    }
                 }
             }
+            if (open.isEmpty() || visited >= MAX_VISITED) {
+                status = StepStatus.FAILED;
+            }
+            return status;
         }
-        return null;
+
+        public Result result() {
+            return result;
+        }
+    }
+
+    public enum StepStatus {
+        RUNNING,
+        FOUND,
+        FAILED
     }
 
     public static boolean isPathValid(Minecraft minecraft, List<BlockPos> path) {

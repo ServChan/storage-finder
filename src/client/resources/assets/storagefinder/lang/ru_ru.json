@@ -42,6 +42,12 @@
   "storagefinder.search.active": "✓ %s — нажмите, чтобы удалить",
   "storagefinder.search.clear": "Очистить поиск",
   "storagefinder.search.cancel": "Отмена",
+  "storagefinder.hud.none": "нет рядом",
+  "storagefinder.hud.matches": "%s хр.",
+  "storagefinder.hud.calculating": "%s хр. • расчёт…",
+  "storagefinder.hud.unreachable": "%s хр. • нет пути",
+  "storagefinder.hud.ready": "%s хр. • %s марш.",
+  "storagefinder.hud.more": "и ещё: %s",
   "modmenu.nameTranslation.storagefinder": "Поиск хранилищ",
   "modmenu.summaryTranslation.storagefinder": "Поиск сундуков по рамкам и сохранённому содержимому",
   "modmenu.descriptionTranslation.storagefinder": "Цветная подсветка и безопасные маршруты к хранилищам для выбранных предметов."

@@ -42,6 +42,12 @@
   "storagefinder.search.active": "✓ %s — click to remove",
   "storagefinder.search.clear": "Clear search",
   "storagefinder.search.cancel": "Cancel",
+  "storagefinder.hud.none": "none nearby",
+  "storagefinder.hud.matches": "%s storage",
+  "storagefinder.hud.calculating": "%s storage • routing…",
+  "storagefinder.hud.unreachable": "%s storage • no route",
+  "storagefinder.hud.ready": "%s storage • %s routes",
+  "storagefinder.hud.more": "and %s more",
   "modmenu.nameTranslation.storagefinder": "Storage Finder",
   "modmenu.summaryTranslation.storagefinder": "Find storage from item frames and remembered contents",
   "modmenu.descriptionTranslation.storagefinder": "Colored highlights and safe routes to storage for selected item types."
