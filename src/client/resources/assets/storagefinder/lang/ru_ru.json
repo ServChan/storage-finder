@@ -1,5 +1,5 @@
 {
-  "key.categories.storagefinder.main": "Поиск хранилищ",
+  "key.category.storagefinder.main": "Поиск хранилищ",
   "key.storagefinder.search": "Найти или отключить поиск предмета",
   "storagefinder.selected.added": "§aПоиск: §f%s §7(цвет #%s)",
   "storagefinder.selected.removed": "§eУбрано из поиска: §f%s",

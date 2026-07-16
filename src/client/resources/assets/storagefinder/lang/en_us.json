@@ -1,5 +1,5 @@
 {
-  "key.categories.storagefinder.main": "Storage Finder",
+  "key.category.storagefinder.main": "Storage Finder",
   "key.storagefinder.search": "Find item or remove search",
   "storagefinder.selected.added": "§aSearching for: §f%s §7(color #%s)",
   "storagefinder.selected.removed": "§eRemoved from search: §f%s",
