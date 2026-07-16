@@ -7,6 +7,7 @@ import net.minecraft.core.Direction;
 import net.minecraft.world.level.block.Block;
 import net.minecraft.world.level.block.BarrelBlock;
 import net.minecraft.world.level.block.Blocks;
+import net.minecraft.world.level.block.state.BlockState;
 import net.minecraft.world.phys.AABB;
 import net.minecraft.world.phys.shapes.VoxelShape;
 
@@ -167,9 +168,10 @@ public final class RouteFinder {
         Set<BlockPos> goals = new HashSet<>();
         Set<BlockPos> storageBlocks = new HashSet<>(StorageIndex.physicalBlocks(minecraft, storage));
         for (BlockPos physical : storageBlocks) {
-            boolean barrel = minecraft.level != null
-                    && minecraft.level.getBlockState(physical).getBlock() instanceof BarrelBlock;
-            double highestSurfaceOffset = barrel
+            BlockState state = minecraft.level == null ? null : minecraft.level.getBlockState(physical);
+            boolean floorBarrel = state != null && state.getBlock() instanceof BarrelBlock
+                    && state.getValue(BarrelBlock.FACING) == Direction.UP;
+            double highestSurfaceOffset = floorBarrel
                     ? HIGHEST_BARREL_SURFACE_OFFSET : HIGHEST_REACHABLE_SURFACE_OFFSET;
             for (Direction direction : Direction.Plane.HORIZONTAL) {
                 BlockPos side = physical.relative(direction);
@@ -188,7 +190,7 @@ public final class RouteFinder {
                     }
                 }
             }
-            if (barrel) {
+            if (floorBarrel) {
                 BlockPos above = physical.above();
                 double surface = surfaceY(minecraft, above);
                 if (Double.isFinite(surface) && isStandableAt(minecraft, above, surface)) {

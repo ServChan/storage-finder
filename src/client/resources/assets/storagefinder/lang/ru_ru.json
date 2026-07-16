@@ -30,6 +30,8 @@
   "storagefinder.config.cancel": "Отмена",
   "storagefinder.config.saved.title": "Storage Finder",
   "storagefinder.config.saved.description": "Настройки сохранены",
+  "storagefinder.config.save_failed.title": "Ошибка сохранения",
+  "storagefinder.config.save_failed.description": "Настройки не записаны; попробуйте ещё раз",
   "storagefinder.search.title": "Поиск предмета в хранилищах",
   "storagefinder.search.description": "Введите название на текущем языке Minecraft",
   "storagefinder.search.input": "Название предмета",

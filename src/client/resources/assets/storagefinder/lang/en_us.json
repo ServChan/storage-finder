@@ -30,6 +30,8 @@
   "storagefinder.config.cancel": "Cancel",
   "storagefinder.config.saved.title": "Storage Finder",
   "storagefinder.config.saved.description": "Settings saved",
+  "storagefinder.config.save_failed.title": "Save failed",
+  "storagefinder.config.save_failed.description": "Settings were not written; try again",
   "storagefinder.search.title": "Search Storage by Item",
   "storagefinder.search.description": "Enter a name in the current Minecraft language",
   "storagefinder.search.input": "Item name",

@@ -6,8 +6,7 @@ import com.google.gson.reflect.TypeToken;
 import net.fabricmc.loader.api.FabricLoader;
 import net.minecraft.client.Minecraft;
 import net.minecraft.core.BlockPos;
-import net.minecraft.world.Container;
-import net.minecraft.world.inventory.ChestMenu;
+import net.minecraft.world.inventory.AbstractContainerMenu;
 import net.minecraft.world.item.ItemStack;
 import net.minecraft.world.level.block.ChestBlock;
 import net.minecraft.world.level.block.state.BlockState;
@@ -61,11 +60,10 @@ public final class StorageIndex {
         }
     }
 
-    public UpdateResult update(String scope, BlockPos pos, ChestMenu menu) {
+    public UpdateResult update(String scope, BlockPos pos, AbstractContainerMenu menu, int storageSlots) {
         Set<String> itemIds = new LinkedHashSet<>();
-        Container container = menu.getContainer();
-        for (int slot = 0; slot < container.getContainerSize(); slot++) {
-            ItemStack stack = container.getItem(slot);
+        for (int slot = 0; slot < storageSlots; slot++) {
+            ItemStack stack = menu.getSlot(slot).getItem();
             if (!stack.isEmpty()) {
                 itemIds.addAll(SearchSelection.itemIds(stack));
             }

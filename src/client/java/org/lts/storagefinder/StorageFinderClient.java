@@ -13,8 +13,13 @@ import net.minecraft.client.multiplayer.ClientLevel;
 import net.minecraft.core.BlockPos;
 import net.minecraft.network.chat.Component;
 import net.minecraft.resources.Identifier;
+import net.minecraft.world.inventory.AbstractContainerMenu;
 import net.minecraft.world.inventory.ChestMenu;
+import net.minecraft.world.inventory.ShulkerBoxMenu;
 import net.minecraft.world.item.ItemStack;
+import net.minecraft.world.level.block.BarrelBlock;
+import net.minecraft.world.level.block.ChestBlock;
+import net.minecraft.world.level.block.ShulkerBoxBlock;
 import org.lts.storagefinder.gui.StorageSearchScreen;
 import org.lwjgl.glfw.GLFW;
 
@@ -34,7 +39,8 @@ public final class StorageFinderClient implements ClientModInitializer {
 
     private static BlockPos pendingStorage;
     private static long pendingStorageAt;
-    private static ChestMenu activeChestMenu;
+    private static AbstractContainerMenu activeStorageMenu;
+    private static int activeStorageSlots;
     private static BlockPos activeStorage;
     private static String activeScope;
     private static boolean activeContentsChanged;
@@ -126,34 +132,60 @@ public final class StorageFinderClient implements ClientModInitializer {
             pendingStorage = null;
         }
 
-        ChestMenu visibleMenu = null;
+        AbstractContainerMenu openedMenu = null;
         if (minecraft.screen instanceof AbstractContainerScreen<?> screen && screen.getMenu() instanceof ChestMenu chestMenu) {
-            visibleMenu = chestMenu;
+            openedMenu = chestMenu;
+        } else if (minecraft.screen instanceof AbstractContainerScreen<?> screen) {
+            openedMenu = screen.getMenu();
         }
 
-        if (visibleMenu != activeChestMenu) {
+        if (activeStorageMenu != null && openedMenu != activeStorageMenu) {
             saveAndClearActiveContainer(minecraft);
-            if (visibleMenu != null && pendingStorage != null) {
-                activeChestMenu = visibleMenu;
-                activeStorage = StorageIndex.canonicalPos(minecraft, pendingStorage);
+        }
+
+        if (activeStorageMenu == null && openedMenu != null && pendingStorage != null) {
+            BlockPos interactedStorage = pendingStorage;
+            pendingStorage = null;
+            int storageSlots = storageSlotCount(minecraft, interactedStorage, openedMenu);
+            if (storageSlots > 0) {
+                activeStorageMenu = openedMenu;
+                activeStorageSlots = storageSlots;
+                activeStorage = StorageIndex.canonicalPos(minecraft, interactedStorage);
                 activeScope = ScopeUtil.current(minecraft);
-                pendingStorage = null;
-                StorageIndex.UpdateResult result = INDEX.update(activeScope, activeStorage, activeChestMenu);
+                StorageIndex.UpdateResult result = INDEX.update(
+                        activeScope, activeStorage, activeStorageMenu, activeStorageSlots);
                 dismissSearchesForStorage(minecraft, activeStorage);
                 if (minecraft.player != null && StorageFinderConfig.current().showMessages) {
                     minecraft.player.sendOverlayMessage(indexMessage(result));
                 }
                 LOCATOR.refresh(minecraft, SELECTION, INDEX);
             }
-        } else if (activeChestMenu != null) {
-            StorageIndex.UpdateResult result = INDEX.update(activeScope, activeStorage, activeChestMenu);
+        } else if (activeStorageMenu != null && openedMenu == activeStorageMenu) {
+            StorageIndex.UpdateResult result = INDEX.update(
+                    activeScope, activeStorage, activeStorageMenu, activeStorageSlots);
             activeContentsChanged |= result.kind() == StorageIndex.UpdateKind.UPDATED;
         }
     }
 
+    private static int storageSlotCount(Minecraft minecraft, BlockPos storage,
+                                        AbstractContainerMenu menu) {
+        if (minecraft.level == null) {
+            return 0;
+        }
+        var block = minecraft.level.getBlockState(storage).getBlock();
+        if ((block instanceof ChestBlock || block instanceof BarrelBlock) && menu instanceof ChestMenu chestMenu) {
+            return chestMenu.getContainer().getContainerSize();
+        }
+        if (block instanceof ShulkerBoxBlock && menu instanceof ShulkerBoxMenu && menu.slots.size() >= 27) {
+            return 27;
+        }
+        return 0;
+    }
+
     private static void saveAndClearActiveContainer(Minecraft minecraft) {
-        if (activeChestMenu != null && activeStorage != null && activeScope != null) {
-            StorageIndex.UpdateResult result = INDEX.update(activeScope, activeStorage, activeChestMenu);
+        if (activeStorageMenu != null && activeStorage != null && activeScope != null) {
+            StorageIndex.UpdateResult result = INDEX.update(
+                    activeScope, activeStorage, activeStorageMenu, activeStorageSlots);
             activeContentsChanged |= result.kind() == StorageIndex.UpdateKind.UPDATED;
             if (activeContentsChanged && minecraft.player != null && StorageFinderConfig.current().showMessages) {
                 minecraft.player.sendOverlayMessage(result.persisted()
@@ -162,14 +194,15 @@ public final class StorageFinderClient implements ClientModInitializer {
             }
             LOCATOR.refresh(minecraft, SELECTION, INDEX);
         }
-        activeChestMenu = null;
+        activeStorageMenu = null;
+        activeStorageSlots = 0;
         activeStorage = null;
         activeScope = null;
         activeContentsChanged = false;
     }
 
-    public static void onContainerScreenRemoved(ChestMenu menu) {
-        if (menu == activeChestMenu) {
+    public static void onContainerScreenRemoved(AbstractContainerMenu menu) {
+        if (menu == activeStorageMenu) {
             saveAndClearActiveContainer(Minecraft.getInstance());
         }
     }

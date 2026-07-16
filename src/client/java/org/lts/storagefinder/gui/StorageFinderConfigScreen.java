@@ -127,16 +127,21 @@ public final class StorageFinderConfigScreen extends Screen {
     }
 
     private void saveAndClose() {
-        StorageFinderConfig.save(config);
-        StorageFinderClient.onConfigChanged();
-        SystemToast.addOrUpdate(this.minecraft.getToastManager(), SAVE_TOAST_ID,
-                Component.translatable("storagefinder.config.saved.title"),
-                Component.translatable("storagefinder.config.saved.description"));
-        closeScreen();
+        if (StorageFinderConfig.save(config)) {
+            StorageFinderClient.onConfigChanged();
+            SystemToast.addOrUpdate(this.minecraft.getToastManager(), SAVE_TOAST_ID,
+                    Component.translatable("storagefinder.config.saved.title"),
+                    Component.translatable("storagefinder.config.saved.description"));
+            closeScreen();
+        } else {
+            SystemToast.addOrUpdate(this.minecraft.getToastManager(), SAVE_TOAST_ID,
+                    Component.translatable("storagefinder.config.save_failed.title"),
+                    Component.translatable("storagefinder.config.save_failed.description"));
+        }
     }
 
     private void closeScreen() {
-        this.minecraft.setScreen(this.minecraft.level == null ? parent : null);
+        this.minecraft.setScreen(parent);
     }
 
     private void refreshScreenWidgets() {

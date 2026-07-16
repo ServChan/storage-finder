@@ -68,7 +68,7 @@ public final class StorageFinderConfig {
         return defaults();
     }
 
-    public static void save(StorageFinderConfig config) {
+    public static boolean save(StorageFinderConfig config) {
         StorageFinderConfig sanitized = sanitize(config.copy());
         Path temporary = PATH.resolveSibling(PATH.getFileName() + ".tmp");
         try {
@@ -83,12 +83,14 @@ public final class StorageFinderConfig {
             }
             instance = sanitized;
             lastModified = Files.getLastModifiedTime(PATH).toMillis();
+            return true;
         } catch (Exception exception) {
             StorageFinderClient.LOGGER.warn("Could not save {}", PATH, exception);
             try {
                 Files.deleteIfExists(temporary);
             } catch (Exception ignored) {
             }
+            return false;
         }
     }
 
