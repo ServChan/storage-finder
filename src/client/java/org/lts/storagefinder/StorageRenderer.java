@@ -30,8 +30,7 @@ public final class StorageRenderer {
             for (int color : entry.getValue()) {
                 double expansion = 0.018 + layer * 0.028;
                 AABB box = new AABB(entry.getKey()).inflate(expansion);
-                int fill = (color & 0x00FFFFFF) | 0x28000000;
-                Gizmos.cuboid(box, GizmoStyle.strokeAndFill(color, 3.0F, fill));
+                Gizmos.cuboid(box, GizmoStyle.stroke(color, 3.0F));
                 layer++;
             }
         }

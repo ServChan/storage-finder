@@ -33,17 +33,18 @@ public final class StorageIndex {
     private static final Type DATA_TYPE = new TypeToken<Map<String, Record>>() { }.getType();
     private static final Path PATH = FabricLoader.getInstance().getConfigDir().resolve("storage_finder_index.json");
     private static final Path BACKUP_PATH = PATH.resolveSibling(PATH.getFileName() + ".bak");
+    private static final Path RECOVERY_PATH = PATH.resolveSibling(PATH.getFileName() + ".recovery");
     private final Map<String, Record> records = new LinkedHashMap<>();
     private boolean dirty;
 
     public void load() {
         if (!Files.exists(PATH)) {
-            restoreBackupIfAvailable();
+            restoreBestRecoveryIfAvailable();
             return;
         }
         try {
             boolean migratedBookKeys = loadFrom(PATH);
-            if (records.isEmpty() && restoreBackupIfAvailable()) {
+            if (records.isEmpty() && restoreBestRecoveryIfAvailable()) {
                 return;
             }
             dirty = migratedBookKeys;
@@ -51,10 +52,12 @@ public final class StorageIndex {
                 if (save(true)) {
                     StorageFinderClient.LOGGER.info("Migrated legacy enchanted-book search keys");
                 }
+            } else {
+                updateRecoverySnapshot();
             }
         } catch (Exception exception) {
             StorageFinderClient.LOGGER.warn("Could not load storage index {}", PATH, exception);
-            restoreBackupIfAvailable();
+            restoreBestRecoveryIfAvailable();
         }
     }
 
@@ -173,6 +176,7 @@ public final class StorageIndex {
                 Files.move(temporary, PATH, StandardCopyOption.REPLACE_EXISTING);
             }
             dirty = false;
+            updateRecoverySnapshot();
             return true;
         } catch (Exception exception) {
             dirty = true;
@@ -212,25 +216,62 @@ public final class StorageIndex {
         return migratedBookKeys;
     }
 
-    private boolean restoreBackupIfAvailable() {
-        if (!Files.exists(BACKUP_PATH)) {
+    private boolean restoreBestRecoveryIfAvailable() {
+        Map<String, Record> bestRecords = Map.of();
+        Path bestSource = null;
+        boolean bestMigrated = false;
+        for (Path candidate : List.of(BACKUP_PATH, RECOVERY_PATH)) {
+            if (!Files.exists(candidate)) {
+                continue;
+            }
+            try {
+                boolean migrated = loadFrom(candidate);
+                if (records.size() > bestRecords.size()) {
+                    bestRecords = new LinkedHashMap<>(records);
+                    bestSource = candidate;
+                    bestMigrated = migrated;
+                }
+            } catch (Exception exception) {
+                StorageFinderClient.LOGGER.warn("Could not read storage recovery candidate {}", candidate, exception);
+            }
+        }
+        if (bestSource == null || bestRecords.isEmpty()) {
+            records.clear();
             return false;
         }
+        records.clear();
+        records.putAll(bestRecords);
+        dirty = true;
+        if (!save(false)) {
+            return false;
+        }
+        StorageFinderClient.LOGGER.info("Restored {} storage records from {}{}", records.size(), bestSource,
+                bestMigrated ? " and migrated legacy enchanted-book keys" : "");
+        return true;
+    }
+
+    private void updateRecoverySnapshot() {
         try {
-            boolean migratedBookKeys = loadFrom(BACKUP_PATH);
-            if (records.isEmpty()) {
-                return false;
-            }
-            dirty = true;
-            if (save(false)) {
-                StorageFinderClient.LOGGER.info("Restored storage index from {}{}", BACKUP_PATH,
-                        migratedBookKeys ? " and migrated legacy enchanted-book keys" : "");
-                return true;
+            int recoverySize = recoveryRecordCount();
+            if (records.size() > recoverySize && Files.exists(PATH)) {
+                Files.copy(PATH, RECOVERY_PATH, StandardCopyOption.REPLACE_EXISTING);
+                StorageFinderClient.LOGGER.info("Updated storage recovery snapshot: {} records", records.size());
             }
         } catch (Exception exception) {
-            StorageFinderClient.LOGGER.warn("Could not restore storage index backup {}", BACKUP_PATH, exception);
+            StorageFinderClient.LOGGER.warn("Could not update storage recovery snapshot {}", RECOVERY_PATH, exception);
         }
-        return false;
+    }
+
+    private int recoveryRecordCount() {
+        if (!Files.exists(RECOVERY_PATH)) {
+            return -1;
+        }
+        try (Reader reader = Files.newBufferedReader(RECOVERY_PATH)) {
+            Map<String, Record> recovery = GSON.fromJson(reader, DATA_TYPE);
+            return recovery == null ? -1 : recovery.size();
+        } catch (Exception ignored) {
+            return -1;
+        }
     }
 
     private static String key(String scope, BlockPos pos) {

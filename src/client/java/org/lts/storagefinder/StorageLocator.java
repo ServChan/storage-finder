@@ -21,11 +21,13 @@ public final class StorageLocator {
     private static final int MAX_ROUTES_PER_COLOR = 3;
     private final Map<BlockPos, List<Integer>> matches = new LinkedHashMap<>();
     private final Map<Integer, List<Route>> routesByColor = new LinkedHashMap<>();
+    private final Map<Integer, String> routeDiagnostics = new HashMap<>();
     private long refreshSerial;
 
     public void clear() {
         matches.clear();
         routesByColor.clear();
+        routeDiagnostics.clear();
     }
 
     public void refresh(Minecraft minecraft, SearchSelection selection, StorageIndex index) {
@@ -136,9 +138,11 @@ public final class StorageLocator {
     private void updateRoutes(Minecraft minecraft, Map<Integer, List<BlockPos>> candidatesByColor) {
         if (!StorageFinderConfig.current().routeEnabled) {
             routesByColor.clear();
+            routeDiagnostics.clear();
             return;
         }
         routesByColor.keySet().removeIf(color -> !candidatesByColor.containsKey(color));
+        routeDiagnostics.keySet().removeIf(color -> !candidatesByColor.containsKey(color));
         BlockPos start = minecraft.player.blockPosition();
         for (Map.Entry<Integer, List<BlockPos>> entry : candidatesByColor.entrySet()) {
             List<BlockPos> candidates = entry.getValue();
@@ -167,6 +171,21 @@ public final class StorageLocator {
             } else {
                 routesByColor.remove(entry.getKey());
             }
+            logRouteState(entry.getKey(), candidates.size(), found.size());
+        }
+    }
+
+    private void logRouteState(int color, int candidates, int routes) {
+        String state = candidates + ":" + routes;
+        if (state.equals(routeDiagnostics.put(color, state))) {
+            return;
+        }
+        if (candidates > 0 && routes == 0) {
+            StorageFinderClient.LOGGER.warn("No reachable route for color #{}, candidates={}",
+                    String.format("%06X", color & 0xFFFFFF), candidates);
+        } else {
+            StorageFinderClient.LOGGER.info("Route state for color #{}: candidates={}, routes={}",
+                    String.format("%06X", color & 0xFFFFFF), candidates, routes);
         }
     }
 
