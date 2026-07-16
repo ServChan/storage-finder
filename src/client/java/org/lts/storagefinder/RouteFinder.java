@@ -5,6 +5,7 @@ import net.minecraft.client.multiplayer.ClientLevel;
 import net.minecraft.core.BlockPos;
 import net.minecraft.core.Direction;
 import net.minecraft.world.level.block.Block;
+import net.minecraft.world.level.block.BarrelBlock;
 import net.minecraft.world.level.block.Blocks;
 import net.minecraft.world.phys.AABB;
 import net.minecraft.world.phys.shapes.VoxelShape;
@@ -24,6 +25,7 @@ public final class RouteFinder {
     private static final int VERTICAL_MARGIN = 8;
     private static final double LOWEST_REACHABLE_SURFACE_OFFSET = -2.001;
     private static final double HIGHEST_REACHABLE_SURFACE_OFFSET = 0.501;
+    private static final double HIGHEST_BARREL_SURFACE_OFFSET = 1.001;
 
     private RouteFinder() {
     }
@@ -165,6 +167,10 @@ public final class RouteFinder {
         Set<BlockPos> goals = new HashSet<>();
         Set<BlockPos> storageBlocks = new HashSet<>(StorageIndex.physicalBlocks(minecraft, storage));
         for (BlockPos physical : storageBlocks) {
+            boolean barrel = minecraft.level != null
+                    && minecraft.level.getBlockState(physical).getBlock() instanceof BarrelBlock;
+            double highestSurfaceOffset = barrel
+                    ? HIGHEST_BARREL_SURFACE_OFFSET : HIGHEST_REACHABLE_SURFACE_OFFSET;
             for (Direction direction : Direction.Plane.HORIZONTAL) {
                 BlockPos side = physical.relative(direction);
                 if (storageBlocks.contains(side)) {
@@ -176,10 +182,17 @@ public final class RouteFinder {
                     double surfaceOffset = surface - physical.getY();
                     if (Double.isFinite(surface)
                             && surfaceOffset >= LOWEST_REACHABLE_SURFACE_OFFSET
-                            && surfaceOffset <= HIGHEST_REACHABLE_SURFACE_OFFSET
+                            && surfaceOffset <= highestSurfaceOffset
                             && isStandableAt(minecraft, candidate, surface)) {
                         goals.add(candidate.immutable());
                     }
+                }
+            }
+            if (barrel) {
+                BlockPos above = physical.above();
+                double surface = surfaceY(minecraft, above);
+                if (Double.isFinite(surface) && isStandableAt(minecraft, above, surface)) {
+                    goals.add(above.immutable());
                 }
             }
         }
