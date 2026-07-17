@@ -188,6 +188,8 @@ config/storage_finder_index.json.recovery
 
 Подробности проверки находятся в [AUDIT.md](AUDIT.md), история изменений — в [CHANGELOG.md](CHANGELOG.md), приоритетные идеи развития — в [ROADMAP.md](ROADMAP.md).
 
+Повторная workspace-проверка 2026-07-17 подтвердила чистую сборку `clean build --warning-mode all`, совпадение ключей `en_us`/`ru_ru` и отсутствие новых компиляционных предупреждений. Новая in-game сессия в рамках повторной проверки не запускалась.
+
 ## Лицензия
 
 MIT, автор `LTS_Server`.
