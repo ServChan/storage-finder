@@ -6,6 +6,7 @@
   "description": "Find nearby storage by item frames and remembered container contents, with colored highlights and routes.",
   "authors": ["LTS_Server"],
   "license": "MIT",
+  "icon": "assets/storagefinder/icon.png",
   "environment": "client",
   "entrypoints": {
     "client": ["org.lts.storagefinder.StorageFinderClient"],
