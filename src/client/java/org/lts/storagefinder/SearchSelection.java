@@ -24,6 +24,7 @@ public final class SearchSelection {
 
     private final LinkedHashMap<String, Integer> selected = new LinkedHashMap<>();
     private final LinkedHashMap<Integer, Query> queries = new LinkedHashMap<>();
+    private Integer pinnedColor;
 
     public Change toggle(ItemStack stack) {
         return toggle(stack, displayName(stack));
@@ -40,6 +41,9 @@ public final class SearchSelection {
                     .collect(Collectors.toCollection(LinkedHashSet::new));
             itemIds.forEach(selected::remove);
             affectedColors.stream().filter(color -> !selected.containsValue(color)).forEach(queries::remove);
+            if (affectedColors.contains(pinnedColor)) {
+                pinnedColor = null;
+            }
             return new Change(false, itemId, oldColor);
         }
 
@@ -50,15 +54,32 @@ public final class SearchSelection {
     }
 
     public int removeColors(Collection<Integer> colors) {
+        Set<Integer> removable = colors.stream().filter(color -> !color.equals(pinnedColor))
+                .collect(Collectors.toCollection(LinkedHashSet::new));
         int previousSize = selected.size();
-        selected.entrySet().removeIf(entry -> colors.contains(entry.getValue()));
-        colors.forEach(queries::remove);
+        selected.entrySet().removeIf(entry -> removable.contains(entry.getValue()));
+        removable.forEach(queries::remove);
         return previousSize - selected.size();
+    }
+
+    public boolean togglePinned(ItemStack stack) {
+        Integer color = colorFor(stack);
+        if (color == null) {
+            return false;
+        }
+        pinnedColor = color.equals(pinnedColor) ? null : color;
+        return color.equals(pinnedColor);
+    }
+
+    public boolean isPinned(ItemStack stack) {
+        Integer color = colorFor(stack);
+        return color != null && color.equals(pinnedColor);
     }
 
     public void clear() {
         selected.clear();
         queries.clear();
+        pinnedColor = null;
     }
 
     public boolean isEmpty() {

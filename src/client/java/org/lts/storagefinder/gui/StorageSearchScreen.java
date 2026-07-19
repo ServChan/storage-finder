@@ -59,13 +59,16 @@ public final class StorageSearchScreen extends Screen {
 
         int buttonY = this.height - 30;
         int gap = 8;
-        int buttonWidth = (fieldWidth - gap) / 2;
+        int buttonWidth = (fieldWidth - gap * 2) / 3;
         addRenderableWidget(Button.builder(Component.translatable("storagefinder.search.clear"), button -> {
             StorageFinderClient.clearSearch();
             closeScreen();
         }).bounds(fieldX, buttonY, buttonWidth, 20).build());
-        addRenderableWidget(Button.builder(Component.translatable("storagefinder.search.cancel"), button -> closeScreen())
+        addRenderableWidget(Button.builder(Component.translatable("storagefinder.search.statistics"), button ->
+                this.minecraft.setScreen(new StorageStatisticsScreen()))
                 .bounds(fieldX + buttonWidth + gap, buttonY, buttonWidth, 20).build());
+        addRenderableWidget(Button.builder(Component.translatable("storagefinder.search.cancel"), button -> closeScreen())
+                .bounds(fieldX + (buttonWidth + gap) * 2, buttonY, buttonWidth, 20).build());
 
         catalog = buildCatalog();
         updateSuggestions("");
@@ -93,6 +96,8 @@ public final class StorageSearchScreen extends Screen {
                             : searchColor != null ? searchColor : 0xFF394554);
             graphics.item(suggestion.icon(), fieldX + 3, rowY + 2);
             Component label = searchColor == null ? suggestion.label()
+                    : StorageFinderClient.isPinned(suggestion.stack())
+                    ? Component.translatable("storagefinder.search.pinned", suggestion.label())
                     : Component.translatable("storagefinder.search.active", suggestion.label());
             graphics.text(this.font, label, fieldX + 24, rowY + 7, 0xFFFFFFFF);
         }
@@ -110,6 +115,20 @@ public final class StorageSearchScreen extends Screen {
                 int index = (int) ((event.y() - listY) / ROW_HEIGHT);
                 if (index >= 0 && index < visibleSuggestions.size()) {
                     choose(visibleSuggestions.get(index));
+                    return true;
+                }
+            }
+        }
+        if (event.button() == GLFW.GLFW_MOUSE_BUTTON_RIGHT) {
+            int listY = fieldY + 23;
+            if (event.x() >= fieldX && event.x() < fieldX + fieldWidth && event.y() >= listY) {
+                int index = (int) ((event.y() - listY) / ROW_HEIGHT);
+                if (index >= 0 && index < visibleSuggestions.size()) {
+                    Suggestion suggestion = visibleSuggestions.get(index);
+                    if (StorageFinderClient.searchColor(suggestion.stack()) == null) {
+                        StorageFinderClient.selectFromSearch(suggestion.stack(), suggestion.label());
+                    }
+                    StorageFinderClient.togglePinned(suggestion.stack());
                     return true;
                 }
             }

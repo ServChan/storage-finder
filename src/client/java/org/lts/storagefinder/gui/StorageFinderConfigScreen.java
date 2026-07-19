@@ -28,31 +28,31 @@ public final class StorageFinderConfigScreen extends Screen {
         int left = (this.width - contentWidth) / 2;
         int gap = 8;
         int columnWidth = (contentWidth - gap) / 2;
-        int y = 42;
+        int y = 38;
 
         addToggle(left, y, columnWidth, "storagefinder.config.enabled", () -> config.enabled,
                 value -> config.enabled = value);
         addToggle(left + columnWidth + gap, y, columnWidth, "storagefinder.config.index_containers",
                 () -> config.indexContainers, value -> config.indexContainers = value);
-        y += 28;
+        y += 24;
 
         addToggle(left, y, columnWidth, "storagefinder.config.search_frames", () -> config.searchItemFrames,
                 value -> config.searchItemFrames = value);
         addToggle(left + columnWidth + gap, y, columnWidth, "storagefinder.config.search_memory",
                 () -> config.searchRememberedContents, value -> config.searchRememberedContents = value);
-        y += 28;
+        y += 24;
 
         addToggle(left, y, columnWidth, "storagefinder.config.highlight", () -> config.highlightEnabled,
                 value -> config.highlightEnabled = value);
         addToggle(left + columnWidth + gap, y, columnWidth, "storagefinder.config.route", () -> config.routeEnabled,
                 value -> config.routeEnabled = value);
-        y += 28;
+        y += 24;
 
         addToggle(left, y, columnWidth, "storagefinder.config.avoid_hazards", () -> config.avoidHazards,
                 value -> config.avoidHazards = value);
         addToggle(left + columnWidth + gap, y, columnWidth, "storagefinder.config.messages", () -> config.showMessages,
                 value -> config.showMessages = value);
-        y += 38;
+        y += 26;
 
         int radiusButtonWidth = 40;
         addRenderableWidget(Button.builder(Component.literal("−"), button -> {
@@ -67,6 +67,33 @@ public final class StorageFinderConfigScreen extends Screen {
             config.searchRadiusChunks = Math.min(StorageFinderConfig.MAX_SEARCH_CHUNKS, config.searchRadiusChunks + 1);
             refreshScreenWidgets();
         }).bounds(left + contentWidth - radiusButtonWidth, y, radiusButtonWidth, BUTTON_HEIGHT).build());
+
+        y += 26;
+        int anchorWidth = (contentWidth - gap) / 2;
+        addRenderableWidget(Button.builder(hudAnchorLabel(), button -> {
+            config.hudAnchor = switch (config.hudAnchor) {
+                case "TOP_LEFT" -> "TOP_RIGHT";
+                case "TOP_RIGHT" -> "BOTTOM_RIGHT";
+                case "BOTTOM_RIGHT" -> "BOTTOM_LEFT";
+                default -> "TOP_LEFT";
+            };
+            refreshScreenWidgets();
+        }).bounds(left, y, anchorWidth, BUTTON_HEIGHT).build());
+        int offsetLeft = left + anchorWidth + gap;
+        int smallWidth = 34;
+        addRenderableWidget(Button.builder(Component.literal("−"), button -> {
+            config.hudOffsetY = Math.max(0, config.hudOffsetY - 8);
+            refreshScreenWidgets();
+        }).bounds(offsetLeft, y, smallWidth, BUTTON_HEIGHT).build());
+        addRenderableWidget(Button.builder(hudOffsetLabel(), button -> {
+            config.hudOffsetY = 48;
+            refreshScreenWidgets();
+        }).bounds(offsetLeft + smallWidth + gap, y,
+                anchorWidth - smallWidth * 2 - gap * 2, BUTTON_HEIGHT).build());
+        addRenderableWidget(Button.builder(Component.literal("+"), button -> {
+            config.hudOffsetY = Math.min(200, config.hudOffsetY + 8);
+            refreshScreenWidgets();
+        }).bounds(left + contentWidth - smallWidth, y, smallWidth, BUTTON_HEIGHT).build());
 
         int bottomY = this.height - 30;
         int bottomButtonWidth = (contentWidth - gap * 2) / 3;
@@ -84,10 +111,8 @@ public final class StorageFinderConfigScreen extends Screen {
     public void extractRenderState(GuiGraphicsExtractor graphics, int mouseX, int mouseY, float tickDelta) {
         graphics.fill(0, 0, this.width, this.height, 0xF010141C);
         graphics.centeredText(this.font, this.title, this.width / 2, 16, 0xFFFFFFFF);
-        graphics.centeredText(this.font, Component.translatable("storagefinder.config.radius_hint"),
-                this.width / 2, 142, 0xFF9AA4B2);
         graphics.centeredText(this.font, Component.translatable("storagefinder.config.hotkey_hint"),
-                this.width / 2, Math.min(this.height - 52, 188), 0xFF88C0D0);
+                this.width / 2, 27, 0xFF88C0D0);
         super.extractRenderState(graphics, mouseX, mouseY, tickDelta);
     }
 
@@ -119,6 +144,15 @@ public final class StorageFinderConfigScreen extends Screen {
     private Component radiusLabel() {
         return Component.translatable("storagefinder.config.radius", config.searchRadiusChunks,
                 config.searchRadiusChunks * 16);
+    }
+
+    private Component hudAnchorLabel() {
+        return Component.translatable("storagefinder.config.hud_anchor",
+                Component.translatable("storagefinder.config.hud_anchor." + config.hudAnchor.toLowerCase()));
+    }
+
+    private Component hudOffsetLabel() {
+        return Component.translatable("storagefinder.config.hud_offset", config.hudOffsetY);
     }
 
     private static Component toggleLabel(String key, boolean value) {

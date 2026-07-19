@@ -18,6 +18,7 @@ import net.minecraft.world.inventory.AbstractContainerMenu;
 import net.minecraft.world.inventory.ChestMenu;
 import net.minecraft.world.inventory.ShulkerBoxMenu;
 import net.minecraft.world.item.ItemStack;
+import net.minecraft.world.Container;
 import net.minecraft.world.level.block.BarrelBlock;
 import net.minecraft.world.level.block.ChestBlock;
 import net.minecraft.world.level.block.ShulkerBoxBlock;
@@ -187,6 +188,9 @@ public final class StorageFinderClient implements ClientModInitializer {
         if (block instanceof ShulkerBoxBlock && menu instanceof ShulkerBoxMenu && menu.slots.size() >= 27) {
             return 27;
         }
+        if (minecraft.level.getBlockEntity(storage) instanceof Container container) {
+            return Math.min(container.getContainerSize(), menu.slots.size());
+        }
         return 0;
     }
 
@@ -240,6 +244,34 @@ public final class StorageFinderClient implements ClientModInitializer {
 
     public static Integer searchColor(ItemStack stack) {
         return SELECTION.colorFor(stack);
+    }
+
+    public static boolean togglePinned(ItemStack stack) {
+        return SELECTION.togglePinned(stack);
+    }
+
+    public static boolean isPinned(ItemStack stack) {
+        return SELECTION.isPinned(stack);
+    }
+
+    public static java.util.Map<String, Integer> nearbyItemStatistics() {
+        Minecraft minecraft = Minecraft.getInstance();
+        if (minecraft.player == null || minecraft.level == null) {
+            return java.util.Map.of();
+        }
+        java.util.Map<String, Integer> totals = new java.util.LinkedHashMap<>();
+        String scope = ScopeUtil.current(minecraft);
+        BlockPos center = minecraft.player.blockPosition();
+        for (StorageIndex.Record record : INDEX.recordsInScope(scope)) {
+            BlockPos pos = record.pos();
+            if (StorageLocator.withinSearchRadius(center, pos)
+                    && minecraft.level.hasChunk(pos.getX() >> 4, pos.getZ() >> 4)
+                    && StorageLocator.isStorage(minecraft, pos)) {
+                record.normalizedCounts().forEach((item, count) ->
+                        totals.merge(item, count, Integer::sum));
+            }
+        }
+        return java.util.Map.copyOf(totals);
     }
 
     public static java.util.List<SearchSelection.Query> activeQueries() {

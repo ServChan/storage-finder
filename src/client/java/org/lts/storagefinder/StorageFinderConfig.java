@@ -28,6 +28,9 @@ public final class StorageFinderConfig {
     public boolean avoidHazards = true;
     public boolean showMessages = true;
     public int searchRadiusChunks = MAX_SEARCH_CHUNKS;
+    public String hudAnchor = "BOTTOM_RIGHT";
+    public int hudOffsetX = 0;
+    public int hudOffsetY = 48;
 
     public static StorageFinderConfig load() {
         ensureExists();
@@ -109,6 +112,9 @@ public final class StorageFinderConfig {
         copy.avoidHazards = avoidHazards;
         copy.showMessages = showMessages;
         copy.searchRadiusChunks = searchRadiusChunks;
+        copy.hudAnchor = hudAnchor;
+        copy.hudOffsetX = hudOffsetX;
+        copy.hudOffsetY = hudOffsetY;
         return copy;
     }
 
@@ -118,6 +124,12 @@ public final class StorageFinderConfig {
 
     private static StorageFinderConfig sanitize(StorageFinderConfig config) {
         config.searchRadiusChunks = Math.max(1, Math.min(MAX_SEARCH_CHUNKS, config.searchRadiusChunks));
+        if (!java.util.Set.of("TOP_LEFT", "TOP_RIGHT", "BOTTOM_LEFT", "BOTTOM_RIGHT")
+                .contains(config.hudAnchor)) {
+            config.hudAnchor = "BOTTOM_RIGHT";
+        }
+        config.hudOffsetX = Math.max(0, Math.min(200, config.hudOffsetX));
+        config.hudOffsetY = Math.max(0, Math.min(200, config.hudOffsetY));
         return config;
     }
 

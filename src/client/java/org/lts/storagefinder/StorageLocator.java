@@ -26,6 +26,7 @@ public final class StorageLocator {
     private final Map<Integer, String> routeDiagnostics = new HashMap<>();
     private final Map<Integer, FailedRouteAttempt> failedRouteAttempts = new HashMap<>();
     private final Map<Integer, List<BlockPos>> latestCandidatesByColor = new LinkedHashMap<>();
+    private final Map<Integer, Integer> latestItemCountsByColor = new LinkedHashMap<>();
     private final Map<Integer, RouteJob> routeJobs = new LinkedHashMap<>();
     private long refreshSerial;
 
@@ -35,6 +36,7 @@ public final class StorageLocator {
         routeDiagnostics.clear();
         failedRouteAttempts.clear();
         latestCandidatesByColor.clear();
+        latestItemCountsByColor.clear();
         routeJobs.clear();
     }
 
@@ -52,7 +54,7 @@ public final class StorageLocator {
 
         StorageFinderConfig config = StorageFinderConfig.current();
 
-        Map<BlockPos, Set<String>> itemsByStorage = new HashMap<>();
+        Map<BlockPos, Map<String, Integer>> itemsByStorage = new HashMap<>();
         Map<Integer, List<BlockPos>> candidatesByColor = new LinkedHashMap<>();
         selection.entries().values().forEach(color -> candidatesByColor.put(color, new ArrayList<>()));
         double playerX = minecraft.player.getX();
@@ -69,8 +71,9 @@ public final class StorageLocator {
                 continue;
             }
             BlockPos canonical = StorageIndex.canonicalPos(minecraft, support);
-            itemsByStorage.computeIfAbsent(canonical, ignored -> new LinkedHashSet<>())
-                    .addAll(SearchSelection.itemIds(frame.getItem()));
+            Map<String, Integer> frameItems = itemsByStorage.computeIfAbsent(canonical,
+                    ignored -> new LinkedHashMap<>());
+            SearchSelection.itemIds(frame.getItem()).forEach(item -> frameItems.putIfAbsent(item, 0));
         }
 
         String scope = ScopeUtil.current(minecraft);
@@ -83,15 +86,21 @@ public final class StorageLocator {
                 continue;
             }
             if (isStorage(minecraft, pos) && storageWithinSearchRadius(minecraft, playerX, playerZ, pos)) {
-                itemsByStorage.computeIfAbsent(pos, ignored -> new LinkedHashSet<>()).addAll(record.items);
+                Map<String, Integer> remembered = itemsByStorage.computeIfAbsent(pos,
+                        ignored -> new LinkedHashMap<>());
+                record.items.forEach(item -> remembered.putIfAbsent(item, 0));
+                record.normalizedCounts().forEach((item, count) -> remembered.merge(item, count, Math::max));
             }
         }
 
-        for (Map.Entry<BlockPos, Set<String>> storage : itemsByStorage.entrySet()) {
+        Map<Integer, Integer> itemCountsByColor = new LinkedHashMap<>();
+        for (Map.Entry<BlockPos, Map<String, Integer>> storage : itemsByStorage.entrySet()) {
             Set<Integer> colors = new LinkedHashSet<>();
+            Map<Integer, Integer> countsInStorage = new LinkedHashMap<>();
             for (Map.Entry<String, Integer> selected : selection.entries().entrySet()) {
-                if (storage.getValue().contains(selected.getKey())) {
+                if (storage.getValue().containsKey(selected.getKey())) {
                     colors.add(selected.getValue());
+                    countsInStorage.merge(selected.getValue(), storage.getValue().get(selected.getKey()), Math::max);
                     List<BlockPos> candidates = candidatesByColor.computeIfAbsent(
                             selected.getValue(), ignored -> new ArrayList<>());
                     if (!candidates.contains(storage.getKey())) {
@@ -99,6 +108,7 @@ public final class StorageLocator {
                     }
                 }
             }
+            countsInStorage.forEach((color, count) -> itemCountsByColor.merge(color, count, Integer::sum));
             if (!colors.isEmpty()) {
                 for (BlockPos physical : StorageIndex.physicalBlocks(minecraft, storage.getKey())) {
                     if (withinSearchRadius(playerX, playerZ, physical)) {
@@ -108,6 +118,8 @@ public final class StorageLocator {
             }
         }
 
+        latestItemCountsByColor.clear();
+        latestItemCountsByColor.putAll(itemCountsByColor);
         updateRoutes(minecraft, candidatesByColor);
     }
 
@@ -124,7 +136,7 @@ public final class StorageLocator {
         for (Map.Entry<Integer, List<BlockPos>> entry : latestCandidatesByColor.entrySet()) {
             stats.put(entry.getKey(), new QueryStats(entry.getValue().size(),
                     routesByColor.getOrDefault(entry.getKey(), List.of()).size(),
-                    routeJobs.containsKey(entry.getKey())));
+                    routeJobs.containsKey(entry.getKey()), latestItemCountsByColor.getOrDefault(entry.getKey(), 0)));
         }
         return Map.copyOf(stats);
     }
@@ -134,7 +146,8 @@ public final class StorageLocator {
             return false;
         }
         var block = minecraft.level.getBlockState(pos).getBlock();
-        return block instanceof ChestBlock || block instanceof BarrelBlock || block instanceof ShulkerBoxBlock;
+        return block instanceof ChestBlock || block instanceof BarrelBlock || block instanceof ShulkerBoxBlock
+                || minecraft.level.getBlockEntity(pos) instanceof net.minecraft.world.Container;
     }
 
     public static boolean withinSearchRadius(BlockPos center, BlockPos pos) {
@@ -309,7 +322,7 @@ public final class StorageLocator {
     public record Route(BlockPos start, BlockPos target, List<BlockPos> path, long createdAtRefresh) {
     }
 
-    public record QueryStats(int matches, int routes, boolean searching) {
+    public record QueryStats(int matches, int routes, boolean searching, int itemCount) {
     }
 
     private static final class RouteJob {

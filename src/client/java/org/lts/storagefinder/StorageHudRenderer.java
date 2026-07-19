@@ -34,14 +34,22 @@ public final class StorageHudRenderer {
         int visible = Math.min(MAX_VISIBLE, queries.size());
         int extraRows = queries.size() > visible ? 1 : 0;
         int panelHeight = visible * ROW_HEIGHT + extraRows * 14;
-        int x = MARGIN;
-        int y = minecraft.getWindow().getGuiScaledHeight() - MARGIN - panelHeight;
+        boolean right = config.hudAnchor.endsWith("RIGHT");
+        boolean bottom = config.hudAnchor.startsWith("BOTTOM");
+        int x = right
+                ? minecraft.getWindow().getGuiScaledWidth() - MARGIN - config.hudOffsetX - PANEL_WIDTH
+                : MARGIN + config.hudOffsetX;
+        int y = bottom
+                ? minecraft.getWindow().getGuiScaledHeight() - MARGIN - config.hudOffsetY - panelHeight
+                : MARGIN + config.hudOffsetY;
+        x = Math.max(0, Math.min(x, minecraft.getWindow().getGuiScaledWidth() - PANEL_WIDTH));
+        y = Math.max(0, Math.min(y, minecraft.getWindow().getGuiScaledHeight() - panelHeight));
 
         for (int index = 0; index < visible; index++) {
             SearchSelection.Query query = queries.get(index);
             int rowY = y + index * ROW_HEIGHT;
             StorageLocator.QueryStats queryStats = stats.getOrDefault(
-                    query.color(), new StorageLocator.QueryStats(0, 0, false));
+                    query.color(), new StorageLocator.QueryStats(0, 0, false, 0));
             Component status = statusComponent(config, queryStats);
             int statusWidth = minecraft.font.width(status);
             int nameWidth = Math.max(30, PANEL_WIDTH - 34 - statusWidth);
@@ -67,16 +75,19 @@ public final class StorageHudRenderer {
         if (stats.matches() == 0) {
             return Component.translatable("storagefinder.hud.none");
         }
+        Component amount = stats.itemCount() > 0
+                ? Component.translatable("storagefinder.hud.amount", stats.itemCount(), stats.matches())
+                : Component.translatable("storagefinder.hud.matches", stats.matches());
         if (!config.routeEnabled) {
-            return Component.translatable("storagefinder.hud.matches", stats.matches());
+            return amount;
         }
         if (stats.searching()) {
-            return Component.translatable("storagefinder.hud.calculating", stats.matches());
+            return Component.translatable("storagefinder.hud.calculating", amount);
         }
         if (stats.routes() == 0) {
-            return Component.translatable("storagefinder.hud.unreachable", stats.matches());
+            return Component.translatable("storagefinder.hud.unreachable", amount);
         }
-        return Component.translatable("storagefinder.hud.ready", stats.matches(), stats.routes());
+        return Component.translatable("storagefinder.hud.ready", amount, stats.routes());
     }
 
     private static String trimToWidth(Minecraft minecraft, String text, int maxWidth) {

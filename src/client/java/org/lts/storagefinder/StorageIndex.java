@@ -62,19 +62,25 @@ public final class StorageIndex {
 
     public UpdateResult update(String scope, BlockPos pos, AbstractContainerMenu menu, int storageSlots) {
         Set<String> itemIds = new LinkedHashSet<>();
+        Map<String, Integer> itemCounts = new LinkedHashMap<>();
         for (int slot = 0; slot < storageSlots; slot++) {
             ItemStack stack = menu.getSlot(slot).getItem();
             if (!stack.isEmpty()) {
-                itemIds.addAll(SearchSelection.itemIds(stack));
+                for (String itemId : SearchSelection.itemIds(stack)) {
+                    itemIds.add(itemId);
+                    itemCounts.merge(itemId, stack.getCount(), Integer::sum);
+                }
             }
         }
 
         String key = key(scope, pos);
         Record previous = records.get(key);
         UpdateKind kind = previous == null ? UpdateKind.NEW
-                : previous.items.equals(itemIds) ? UpdateKind.UNCHANGED : UpdateKind.UPDATED;
+                : previous.items.equals(itemIds) && previous.normalizedCounts().equals(itemCounts)
+                ? UpdateKind.UNCHANGED : UpdateKind.UPDATED;
         if (kind != UpdateKind.UNCHANGED || !Files.exists(PATH)) {
-            Record record = new Record(scope, pos.getX(), pos.getY(), pos.getZ(), itemIds, System.currentTimeMillis());
+            Record record = new Record(scope, pos.getX(), pos.getY(), pos.getZ(), itemIds,
+                    itemCounts, System.currentTimeMillis());
             records.put(key, record);
             dirty = true;
         }
@@ -313,15 +319,22 @@ public final class StorageIndex {
         public int y;
         public int z;
         public Set<String> items;
+        public Map<String, Integer> counts;
         public long updatedAt;
 
-        public Record(String scope, int x, int y, int z, Set<String> items, long updatedAt) {
+        public Record(String scope, int x, int y, int z, Set<String> items,
+                      Map<String, Integer> counts, long updatedAt) {
             this.scope = scope;
             this.x = x;
             this.y = y;
             this.z = z;
             this.items = new LinkedHashSet<>(items);
+            this.counts = new LinkedHashMap<>(counts);
             this.updatedAt = updatedAt;
+        }
+
+        public Map<String, Integer> normalizedCounts() {
+            return counts == null ? Map.of() : counts;
         }
 
         public BlockPos pos() {
