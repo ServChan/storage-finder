@@ -4,11 +4,15 @@ import net.minecraft.client.Minecraft;
 import net.minecraft.client.multiplayer.ClientLevel;
 import net.minecraft.core.BlockPos;
 import net.minecraft.core.Direction;
+import net.minecraft.tags.BlockTags;
 import net.minecraft.world.level.block.Block;
 import net.minecraft.world.level.block.BarrelBlock;
 import net.minecraft.world.level.block.Blocks;
 import net.minecraft.world.level.block.state.BlockState;
+import net.minecraft.world.level.ClipContext;
 import net.minecraft.world.phys.AABB;
+import net.minecraft.world.phys.BlockHitResult;
+import net.minecraft.world.phys.Vec3;
 import net.minecraft.world.phys.shapes.VoxelShape;
 
 import java.util.ArrayList;
@@ -24,9 +28,8 @@ import java.util.Set;
 public final class RouteFinder {
     private static final int MAX_VISITED = 40_000;
     private static final int VERTICAL_MARGIN = 8;
-    private static final double LOWEST_REACHABLE_SURFACE_OFFSET = -2.001;
-    private static final double HIGHEST_REACHABLE_SURFACE_OFFSET = 0.501;
-    private static final double HIGHEST_BARREL_SURFACE_OFFSET = 1.001;
+    private static final double MAX_STEP_UP = 1.001;
+    private static final double MAX_DROP_DOWN = 1.251;
 
     private RouteFinder() {
     }
@@ -116,7 +119,7 @@ public final class RouteFinder {
                 }
 
                 double currentCost = bestCost.getOrDefault(current, Double.POSITIVE_INFINITY);
-                for (BlockPos next : neighbours(minecraft, current, start, minY, maxY)) {
+                for (BlockPos next : neighbours(minecraft, current, minY, maxY)) {
                     if (closed.contains(next)) {
                         continue;
                     }
@@ -162,7 +165,12 @@ public final class RouteFinder {
             if (previous != null) {
                 int horizontalDistance = Math.abs(pos.getX() - previous.getX()) + Math.abs(pos.getZ() - previous.getZ());
                 double heightDifference = surface - previousSurface;
-                if (horizontalDistance != 1 || heightDifference > 1.001 || heightDifference < -1.251) {
+                boolean verticalClimb = horizontalDistance == 0
+                        && Math.abs(pos.getY() - previous.getY()) == 1
+                        && canClimbBetween(minecraft, previous, pos);
+                if ((!verticalClimb && horizontalDistance != 1)
+                        || heightDifference > MAX_STEP_UP || heightDifference < -MAX_DROP_DOWN
+                        || !canTraverse(minecraft, previous, previousSurface, pos, surface)) {
                     return false;
                 }
             }
@@ -177,8 +185,8 @@ public final class RouteFinder {
                 && findGoals(minecraft, storage).contains(path.getLast());
     }
 
-    private static List<BlockPos> neighbours(Minecraft minecraft, BlockPos current, BlockPos start, int minY, int maxY) {
-        List<BlockPos> result = new ArrayList<>(4);
+    private static List<BlockPos> neighbours(Minecraft minecraft, BlockPos current, int minY, int maxY) {
+        List<BlockPos> result = new ArrayList<>(6);
         double currentSurface = surfaceY(minecraft, current);
         for (Direction direction : Direction.Plane.HORIZONTAL) {
             BlockPos horizontal = current.relative(direction);
@@ -189,70 +197,83 @@ public final class RouteFinder {
                 if (candidate.getY() >= minY && candidate.getY() <= maxY
                         && StorageLocator.withinSearchRadius(minecraft.player.getX(), minecraft.player.getZ(), candidate)
                         && Double.isFinite(candidateSurface)
-                        && heightDifference <= 1.001
-                        && heightDifference >= -1.251
-                        && isStandableAt(minecraft, candidate, candidateSurface)) {
+                        && heightDifference <= MAX_STEP_UP
+                        && heightDifference >= -MAX_DROP_DOWN
+                        && isStandableAt(minecraft, candidate, candidateSurface)
+                        && canTraverse(minecraft, current, currentSurface, candidate, candidateSurface)) {
                     result.add(candidate.immutable());
                     break;
                 }
+            }
+        }
+        for (int dy : new int[]{1, -1}) {
+            BlockPos candidate = current.offset(0, dy, 0);
+            double candidateSurface = surfaceY(minecraft, candidate);
+            if (candidate.getY() >= minY && candidate.getY() <= maxY
+                    && StorageLocator.withinSearchRadius(minecraft.player.getX(), minecraft.player.getZ(), candidate)
+                    && Double.isFinite(candidateSurface)
+                    && isStandableAt(minecraft, candidate, candidateSurface)
+                    && canClimbBetween(minecraft, current, candidate)
+                    && canTraverse(minecraft, current, currentSurface, candidate, candidateSurface)) {
+                result.add(candidate.immutable());
             }
         }
         return result;
     }
 
     private static BlockPos findStart(Minecraft minecraft, BlockPos requested) {
-        if (isStandable(minecraft, requested)) {
-            return requested.immutable();
-        }
-        for (int dy = -2; dy <= 2; dy++) {
+        BlockPos best = null;
+        double bestDistance = Double.POSITIVE_INFINITY;
+        for (int dy : new int[]{0, -1, 1, -2, 2}) {
             BlockPos candidate = requested.offset(0, dy, 0);
-            if (isStandable(minecraft, candidate)) {
-                return candidate.immutable();
+            double surface = surfaceY(minecraft, candidate);
+            if (Double.isFinite(surface) && isStandableAt(minecraft, candidate, surface)) {
+                double distance = Math.abs(surface - minecraft.player.getY());
+                if (distance < bestDistance) {
+                    best = candidate.immutable();
+                    bestDistance = distance;
+                }
             }
         }
-        return null;
+        return best;
     }
 
     private static Set<BlockPos> findGoals(Minecraft minecraft, BlockPos storage) {
         Set<BlockPos> goals = new HashSet<>();
+        if (minecraft.level == null || minecraft.player == null) {
+            return goals;
+        }
         Set<BlockPos> storageBlocks = new HashSet<>(StorageIndex.physicalBlocks(minecraft, storage));
+        double reach = minecraft.player.blockInteractionRange();
+        int horizontalRange = Math.max(1, (int) Math.ceil(reach));
         for (BlockPos physical : storageBlocks) {
-            BlockState state = minecraft.level == null ? null : minecraft.level.getBlockState(physical);
-            boolean floorBarrel = state != null && state.getBlock() instanceof BarrelBlock
-                    && state.getValue(BarrelBlock.FACING) == Direction.UP;
-            double highestSurfaceOffset = floorBarrel
-                    ? HIGHEST_BARREL_SURFACE_OFFSET : HIGHEST_REACHABLE_SURFACE_OFFSET;
-            for (Direction direction : Direction.Plane.HORIZONTAL) {
-                BlockPos side = physical.relative(direction);
-                if (storageBlocks.contains(side)) {
-                    continue;
-                }
-                for (int dy = -2; dy <= 2; dy++) {
-                    BlockPos candidate = side.offset(0, dy, 0);
-                    double surface = surfaceY(minecraft, candidate);
-                    double surfaceOffset = surface - physical.getY();
-                    if (Double.isFinite(surface)
-                            && surfaceOffset >= LOWEST_REACHABLE_SURFACE_OFFSET
-                            && surfaceOffset <= highestSurfaceOffset
-                            && isStandableAt(minecraft, candidate, surface)) {
-                        goals.add(candidate.immutable());
+            BlockState storageState = minecraft.level.getBlockState(physical);
+            boolean walkableBarrelTop = storageState.getBlock() instanceof BarrelBlock
+                    && storageState.getValue(BarrelBlock.FACING) == Direction.UP;
+            for (int dx = -horizontalRange; dx <= horizontalRange; dx++) {
+                for (int dz = -horizontalRange; dz <= horizontalRange; dz++) {
+                    if (dx == 0 && dz == 0 && !walkableBarrelTop) {
+                        continue;
                     }
-                }
-            }
-            if (floorBarrel) {
-                BlockPos above = physical.above();
-                double surface = surfaceY(minecraft, above);
-                if (Double.isFinite(surface) && isStandableAt(minecraft, above, surface)) {
-                    goals.add(above.immutable());
+                    if (dx * dx + dz * dz > (reach + 1.0) * (reach + 1.0)) {
+                        continue;
+                    }
+                    for (int dy = -horizontalRange; dy <= 2; dy++) {
+                        BlockPos candidate = physical.offset(dx, dy, dz);
+                        if (storageBlocks.contains(candidate)) {
+                            continue;
+                        }
+                        double surface = surfaceY(minecraft, candidate);
+                        if (Double.isFinite(surface)
+                                && isStandableAt(minecraft, candidate, surface)
+                                && canReachStorage(minecraft, candidate, surface, physical, reach)) {
+                            goals.add(candidate.immutable());
+                        }
+                    }
                 }
             }
         }
         return goals;
-    }
-
-    private static boolean isStandable(Minecraft minecraft, BlockPos feet) {
-        double surface = surfaceY(minecraft, feet);
-        return Double.isFinite(surface) && isStandableAt(minecraft, feet, surface);
     }
 
     private static boolean isStandableAt(Minecraft minecraft, BlockPos feet, double surface) {
@@ -268,14 +289,7 @@ public final class RouteFinder {
             return false;
         }
 
-        double width = minecraft.player.getBbWidth();
-        double height = minecraft.player.getBbHeight();
-        double centerX = feet.getX() + 0.5;
-        double centerZ = feet.getZ() + 0.5;
-        double bottom = surface + 0.0001;
-        AABB body = new AABB(centerX - width / 2.0, bottom, centerZ - width / 2.0,
-                centerX + width / 2.0, bottom + height, centerZ + width / 2.0);
-        return level.noCollision(minecraft.player, body);
+        return level.noCollision(minecraft.player, bodyBox(minecraft, feet, surface));
     }
 
     public static double surfaceY(Minecraft minecraft, BlockPos feet) {
@@ -284,6 +298,12 @@ public final class RouteFinder {
             return Double.NaN;
         }
 
+        if (isClimbable(level, feet)) {
+            return feet.getY();
+        }
+        if (isClimbable(level, feet.below())) {
+            return feet.getY();
+        }
         double inCell = collisionTop(level, feet);
         if (Double.isFinite(inCell)) {
             return inCell;
@@ -297,10 +317,72 @@ public final class RouteFinder {
             return Double.NaN;
         }
         double localTop = shape.max(Direction.Axis.Y, 0.5, 0.5);
-        if (!Double.isFinite(localTop)) {
-            localTop = shape.max(Direction.Axis.Y);
+        return Double.isFinite(localTop) ? pos.getY() + localTop : Double.NaN;
+    }
+
+    private static boolean canTraverse(Minecraft minecraft, BlockPos from, double fromSurface,
+                                       BlockPos to, double toSurface) {
+        if (!Double.isFinite(fromSurface) || !Double.isFinite(toSurface)
+                || minecraft.level == null || minecraft.player == null) {
+            return false;
         }
-        return pos.getY() + localTop;
+        if (from.getX() == to.getX() && from.getZ() == to.getZ()) {
+            if (!canClimbBetween(minecraft, from, to)) {
+                return false;
+            }
+            double bottom = Math.min(fromSurface, toSurface) + 0.0001;
+            double top = Math.max(fromSurface, toSurface) + minecraft.player.getBbHeight();
+            AABB vertical = bodyBox(minecraft, from, bottom - 0.0001)
+                    .setMaxY(top);
+            return minecraft.level.noCollision(minecraft.player, vertical);
+        }
+
+        double travelSurface = Math.max(fromSurface, toSurface);
+        AABB fromBody = bodyBox(minecraft, from, travelSurface);
+        AABB toBody = bodyBox(minecraft, to, travelSurface);
+        AABB swept = fromBody.minmax(toBody);
+        return minecraft.level.noCollision(minecraft.player, swept);
+    }
+
+    private static AABB bodyBox(Minecraft minecraft, BlockPos feet, double surface) {
+        double width = minecraft.player.getBbWidth();
+        double height = minecraft.player.getBbHeight();
+        double centerX = feet.getX() + 0.5;
+        double centerZ = feet.getZ() + 0.5;
+        double bottom = surface + 0.0001;
+        return new AABB(centerX - width / 2.0, bottom, centerZ - width / 2.0,
+                centerX + width / 2.0, bottom + height, centerZ + width / 2.0);
+    }
+
+    private static boolean canClimbBetween(Minecraft minecraft, BlockPos first, BlockPos second) {
+        if (minecraft.level == null || first.getX() != second.getX() || first.getZ() != second.getZ()) {
+            return false;
+        }
+        return isClimbable(minecraft.level, first) || isClimbable(minecraft.level, second);
+    }
+
+    private static boolean isClimbable(ClientLevel level, BlockPos pos) {
+        BlockState state = level.getBlockState(pos);
+        return state.is(BlockTags.CLIMBABLE) || state.is(Blocks.SCAFFOLDING);
+    }
+
+    private static boolean canReachStorage(Minecraft minecraft, BlockPos feet, double surface,
+                                           BlockPos storage, double reach) {
+        Vec3 eye = new Vec3(feet.getX() + 0.5, surface + minecraft.player.getEyeHeight(),
+                feet.getZ() + 0.5);
+        AABB targetBox = new AABB(storage);
+        double x = Math.max(targetBox.minX, Math.min(eye.x, targetBox.maxX));
+        double y = Math.max(targetBox.minY, Math.min(eye.y, targetBox.maxY));
+        double z = Math.max(targetBox.minZ, Math.min(eye.z, targetBox.maxZ));
+        Vec3 nearest = new Vec3(x, y, z);
+        if (eye.distanceToSqr(nearest) > reach * reach) {
+            return false;
+        }
+        Vec3 center = targetBox.getCenter();
+        Vec3 aim = nearest.add(center.subtract(nearest).scale(0.01));
+        BlockHitResult hit = minecraft.level.clip(new ClipContext(eye, aim,
+                ClipContext.Block.OUTLINE, ClipContext.Fluid.NONE, minecraft.player));
+        return hit.getBlockPos().equals(storage);
     }
 
     private static boolean hasChunk(ClientLevel level, BlockPos pos) {

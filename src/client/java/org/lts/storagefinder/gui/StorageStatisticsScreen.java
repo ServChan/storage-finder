@@ -30,6 +30,7 @@ public final class StorageStatisticsScreen extends Screen {
     private int rows;
     private int left;
     private int contentWidth;
+    private boolean nearby = true;
 
     public StorageStatisticsScreen() {
         super(Component.translatable("storagefinder.statistics.title"));
@@ -39,15 +40,25 @@ public final class StorageStatisticsScreen extends Screen {
     protected void init() {
         contentWidth = Math.min(440, width - 40);
         left = (width - contentWidth) / 2;
-        rows = Math.max(3, Math.min(10, (height - 112) / ROW_HEIGHT));
-        searchBox = new EditBox(font, left, 43, contentWidth, 20,
+        rows = Math.max(3, Math.min(10, (height - 135) / ROW_HEIGHT));
+        int gap = 8;
+        int modeWidth = (contentWidth - gap) / 2;
+        addRenderableWidget(Button.builder(Component.translatable("storagefinder.statistics.nearby"), button -> {
+            nearby = true;
+            reloadEntries();
+        }).bounds(left, 43, modeWidth, 20).build());
+        addRenderableWidget(Button.builder(Component.translatable("storagefinder.statistics.everywhere"), button -> {
+            nearby = false;
+            reloadEntries();
+        }).bounds(left + modeWidth + gap, 43, modeWidth, 20).build());
+
+        searchBox = new EditBox(font, left, 66, contentWidth, 20,
                 Component.translatable("storagefinder.statistics.search"));
         searchBox.setHint(Component.translatable("storagefinder.statistics.search_hint"));
         searchBox.setResponder(this::filter);
         addRenderableWidget(searchBox);
 
         int bottomY = height - 30;
-        int gap = 8;
         int buttonWidth = (contentWidth - gap * 2) / 3;
         addRenderableWidget(Button.builder(Component.translatable("storagefinder.statistics.previous"), button -> {
             page = Math.max(0, page - 1);
@@ -59,8 +70,7 @@ public final class StorageStatisticsScreen extends Screen {
             page = Math.min(pages - 1, page + 1);
         }).bounds(left + (buttonWidth + gap) * 2, bottomY, buttonWidth, 20).build());
 
-        allEntries = buildEntries(StorageFinderClient.nearbyItemStatistics());
-        filter("");
+        reloadEntries();
         setInitialFocus(searchBox);
     }
 
@@ -68,13 +78,16 @@ public final class StorageStatisticsScreen extends Screen {
     public void extractRenderState(GuiGraphicsExtractor graphics, int mouseX, int mouseY, float tickDelta) {
         graphics.fill(0, 0, width, height, 0xF010141C);
         graphics.centeredText(font, title, width / 2, 14, 0xFFFFFFFF);
-        graphics.centeredText(font, Component.translatable("storagefinder.statistics.description",
-                StorageFinderConfig.current().searchRadiusChunks * 16), width / 2, 27, 0xFF9AA4B2);
+        Component description = nearby
+                ? Component.translatable("storagefinder.statistics.description",
+                        StorageFinderConfig.current().searchRadiusChunks)
+                : Component.translatable("storagefinder.statistics.description_everywhere");
+        graphics.centeredText(font, description, width / 2, 27, 0xFF9AA4B2);
         super.extractRenderState(graphics, mouseX, mouseY, tickDelta);
 
         int start = page * rows;
         int end = Math.min(filteredEntries.size(), start + rows);
-        int listY = 66;
+        int listY = 89;
         for (int index = start; index < end; index++) {
             Entry entry = filteredEntries.get(index);
             int rowY = listY + (index - start) * ROW_HEIGHT;
@@ -126,6 +139,13 @@ public final class StorageStatisticsScreen extends Screen {
         page = 0;
     }
 
+    private void reloadEntries() {
+        allEntries = buildEntries(nearby
+                ? StorageFinderClient.nearbyItemStatistics()
+                : StorageFinderClient.allKnownItemStatistics());
+        filter(searchBox == null ? "" : searchBox.getValue());
+    }
+
     private static List<Entry> buildEntries(Map<String, Integer> counts) {
         List<Entry> result = new ArrayList<>();
         counts.forEach((key, count) -> {
@@ -147,7 +167,7 @@ public final class StorageStatisticsScreen extends Screen {
     }
 
     private void back() {
-        minecraft.setScreen(new StorageSearchScreen());
+        minecraft.setScreenAndShow(new StorageSearchScreen());
     }
 
     private record Entry(String key, Component label, ItemStack stack, int count) {

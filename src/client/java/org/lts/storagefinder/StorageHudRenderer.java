@@ -22,7 +22,7 @@ public final class StorageHudRenderer {
     public static void render(Minecraft minecraft, GuiGraphicsExtractor graphics) {
         StorageFinderConfig config = StorageFinderConfig.current();
         if (minecraft == null || minecraft.player == null || minecraft.level == null
-                || minecraft.options.hideGui || minecraft.screen != null || !config.enabled) {
+                || MinecraftUiAccess.isHudHidden(minecraft) || MinecraftScreenAccess.getScreen(minecraft) != null || !config.enabled) {
             return;
         }
 

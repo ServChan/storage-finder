@@ -54,7 +54,21 @@ public final class StorageRenderer {
         Vec3 previous = routePoint(minecraft, path.getFirst(), yOffset);
         for (int i = 1; i < path.size(); i++) {
             Vec3 next = routePoint(minecraft, path.get(i), yOffset);
-            Gizmos.line(previous, next, color, 2.5F);
+            if (Math.abs(next.y - previous.y) > 0.01
+                    && (Math.abs(next.x - previous.x) > 0.01 || Math.abs(next.z - previous.z) > 0.01)) {
+                double travelY = Math.max(previous.y, next.y);
+                Vec3 firstCorner = new Vec3(previous.x, travelY, previous.z);
+                Vec3 secondCorner = new Vec3(next.x, travelY, next.z);
+                if (previous.distanceToSqr(firstCorner) > 0.0001) {
+                    Gizmos.line(previous, firstCorner, color, 2.5F);
+                }
+                Gizmos.line(firstCorner, secondCorner, color, 2.5F);
+                if (secondCorner.distanceToSqr(next) > 0.0001) {
+                    Gizmos.line(secondCorner, next, color, 2.5F);
+                }
+            } else {
+                Gizmos.line(previous, next, color, 2.5F);
+            }
             if ((i & 1) == 0) {
                 Gizmos.point(next, color, 5.0F);
             }

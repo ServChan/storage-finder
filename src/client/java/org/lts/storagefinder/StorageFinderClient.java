@@ -113,12 +113,12 @@ public final class StorageFinderClient implements ClientModInitializer {
     private static void handleSearchKey(Minecraft minecraft) {
         StorageFinderConfig config = StorageFinderConfig.current();
         while (searchKey.consumeClick()) {
-            if (!config.enabled || minecraft.screen != null || minecraft.player == null) {
+            if (!config.enabled || MinecraftScreenAccess.getScreen(minecraft) != null || minecraft.player == null) {
                 continue;
             }
             ItemStack held = minecraft.player.getMainHandItem();
             if (held.isEmpty()) {
-                minecraft.setScreen(new StorageSearchScreen());
+                minecraft.setScreenAndShow(new StorageSearchScreen());
             } else {
                 Component displayName = SearchSelection.displayName(held);
                 SearchSelection.Change change = SELECTION.toggle(held, displayName);
@@ -142,9 +142,9 @@ public final class StorageFinderClient implements ClientModInitializer {
         }
 
         AbstractContainerMenu openedMenu = null;
-        if (minecraft.screen instanceof AbstractContainerScreen<?> screen && screen.getMenu() instanceof ChestMenu chestMenu) {
+        if (MinecraftScreenAccess.getScreen(minecraft) instanceof AbstractContainerScreen<?> screen && screen.getMenu() instanceof ChestMenu chestMenu) {
             openedMenu = chestMenu;
-        } else if (minecraft.screen instanceof AbstractContainerScreen<?> screen) {
+        } else if (MinecraftScreenAccess.getScreen(minecraft) instanceof AbstractContainerScreen<?> screen) {
             openedMenu = screen.getMenu();
         }
 
@@ -270,6 +270,20 @@ public final class StorageFinderClient implements ClientModInitializer {
                 record.normalizedCounts().forEach((item, count) ->
                         totals.merge(item, count, Integer::sum));
             }
+        }
+        return java.util.Map.copyOf(totals);
+    }
+
+    public static java.util.Map<String, Integer> allKnownItemStatistics() {
+        Minecraft minecraft = Minecraft.getInstance();
+        if (minecraft.level == null) {
+            return java.util.Map.of();
+        }
+        java.util.Map<String, Integer> totals = new java.util.LinkedHashMap<>();
+        String scope = ScopeUtil.current(minecraft);
+        for (StorageIndex.Record record : INDEX.recordsInScope(scope)) {
+            record.normalizedCounts().forEach((item, count) ->
+                    totals.merge(item, count, Integer::sum));
         }
         return java.util.Map.copyOf(totals);
     }

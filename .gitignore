@@ -38,3 +38,15 @@ gradle-local.properties
 *.tmp
 hs_err_pid*
 replay_pid*
+
+# Local AI/agent workspace instructions
+AGENTS.md
+**/AGENTS.md
+CLAUDE.md
+**/CLAUDE.md
+.codex/
+**/.codex/
+.agents/
+**/.agents/
+.agent-notes/
+**/.agent-notes/

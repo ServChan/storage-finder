@@ -1,13 +1,13 @@
 # Storage Finder
 
-[![Minecraft](https://img.shields.io/badge/Minecraft-26.1.2-62b47a)](https://www.minecraft.net/)
+[![Minecraft](https://img.shields.io/badge/Minecraft-26.1.2--26.2-62b47a)](https://www.minecraft.net/)
 [![Fabric](https://img.shields.io/badge/Fabric-client--side-d7c59a)](https://fabricmc.net/)
 [![Java](https://img.shields.io/badge/Java-25-e76f00)](https://adoptium.net/)
 [![License](https://img.shields.io/badge/license-MIT-blue.svg)](LICENSE)
 
 ## Русский
 
-Клиентский Fabric-мод для Minecraft **26.1.2**, который ищет ближайшие хранилища по выбранным предметам, подсвечивает все совпадения и строит безопасные наземные маршруты максимум к трём ближайшим достижимым целям.
+Клиентский Fabric-мод для Minecraft **26.1.2-26.2**, который ищет ближайшие хранилища по выбранным предметам, подсвечивает все совпадения и строит безопасные наземные маршруты максимум к трём ближайшим достижимым целям. Один JAR поддерживает обе версии.
 
 Мод работает полностью на клиенте: устанавливать его на сервер не требуется. Для поиска используются предметные рамки и локальный индекс контейнеров, которые игрок уже открывал.
 
@@ -158,8 +158,8 @@ Legacy-записи без seed переносятся только если н�
 
 Требования:
 
-- Minecraft 26.1.2;
-- Fabric Loader 0.19.3 или новее в ветке, совместимой с 26.1.2;
+- Minecraft 26.1.2-26.2;
+- Fabric Loader 0.19.3 или новее;
 - Java 25;
 - Fabric Lifecycle Events, Fabric Rendering API и Fabric Key Mapping API (обычно входят в Fabric API);
 - Mod Menu необязателен, но нужен для графических настроек.
@@ -177,10 +177,10 @@ Legacy-записи без seed переносятся только если н�
 Готовый файл:
 
 ```text
-build/libs/storage-finder-1.0.0.jar
+build/libs/storage-finder-1.0.2.jar
 ```
 
-Проект использует Java 25, Loom 1.17.12 и Gradle Wrapper 9.5.0. Minecraft 26.1.x необфусцирован, поэтому Mojang mappings не подключаются.
+Проект использует Java 25, Loom 1.17.12 и Gradle Wrapper 9.5.0. Minecraft 26.1.2 и 26.2 необфусцированы, поэтому Mojang mappings не подключаются.
 
 ### Диагностика
 
@@ -199,7 +199,7 @@ config/storage_finder_index.json.recovery
 
 ### Совместимость и ограничения
 
-- Проверена компиляция против Minecraft 26.1.2 и текущих Fabric API-модулей проекта.
+- Проверена компиляция против Minecraft 26.1.2 и 26.2 с соответствующими Fabric API-модулями проекта.
 - Рендер использует `LevelRenderEvents` и Gizmos, не заменяя рендер чанков Sodium/Iris/Voxy.
 - Поиск видит только уже загруженные клиентом чанки и сущности.
 - Закрытый контейнер нельзя прочитать с клиента до его открытия; рамка при этом доступна как независимый источник.
@@ -219,7 +219,7 @@ MIT, автор `LTS_Server`.
 
 ## English
 
-Storage Finder is a client-side Fabric mod for Minecraft **26.1.2** that finds nearby storage blocks containing selected items, highlights every match, and builds safe ground routes to up to three of the nearest reachable targets.
+Storage Finder is a client-side Fabric mod for Minecraft **26.1.2-26.2** that finds nearby storage blocks containing selected items, highlights every match, and builds safe ground routes to up to three of the nearest reachable targets. One JAR supports both versions.
 
 The mod runs entirely on the client and does not need to be installed on the server. It combines visible item frames with a local index of containers that the player has previously opened.
 
@@ -370,8 +370,8 @@ If saving fails, the settings screen stays open and displays an error instead of
 
 Requirements:
 
-- Minecraft 26.1.2;
-- Fabric Loader 0.19.3 or a newer 26.1.2-compatible release;
+- Minecraft 26.1.2-26.2;
+- Fabric Loader 0.19.3 or newer;
 - Java 25;
 - Fabric Lifecycle Events, Fabric Rendering API, and Fabric Key Mapping API, normally supplied by Fabric API;
 - Mod Menu is optional but required for the graphical settings screen.
@@ -389,10 +389,10 @@ Do not replace the JAR while Minecraft is running. The JVM may lazily read class
 Output:
 
 ```text
-build/libs/storage-finder-1.0.0.jar
+build/libs/storage-finder-1.0.2.jar
 ```
 
-The project uses Java 25, Loom 1.17.12, and Gradle Wrapper 9.5.0. Minecraft 26.1.x is unobfuscated, so Mojang mappings are not configured.
+The project uses Java 25, Loom 1.17.12, and Gradle Wrapper 9.5.0. Minecraft 26.1.2 and 26.2 are unobfuscated, so Mojang mappings are not configured.
 
 ### Diagnostics
 
@@ -411,7 +411,7 @@ When a query is selected through a held item or the text catalog, the mod logs t
 
 ### Compatibility and limitations
 
-- Compilation has been verified against Minecraft 26.1.2 and the project's current Fabric API modules.
+- Compilation has been verified against Minecraft 26.1.2 and 26.2 with the matching Fabric API modules.
 - Rendering uses `LevelRenderEvents` and Gizmos without replacing the Sodium, Iris, or Voxy chunk renderer.
 - Search can see only chunks and entities already loaded by the client.
 - The client cannot read a closed container before it has been opened; an item frame remains available as an independent source.

@@ -8,6 +8,7 @@ import net.minecraft.client.input.KeyEvent;
 import net.minecraft.network.chat.Component;
 import org.lwjgl.glfw.GLFW;
 import org.lts.storagefinder.StorageFinderClient;
+import org.lts.storagefinder.MinecraftUiAccess;
 import org.lts.storagefinder.StorageFinderConfig;
 
 public final class StorageFinderConfigScreen extends Screen {
@@ -163,19 +164,19 @@ public final class StorageFinderConfigScreen extends Screen {
     private void saveAndClose() {
         if (StorageFinderConfig.save(config)) {
             StorageFinderClient.onConfigChanged();
-            SystemToast.addOrUpdate(this.minecraft.getToastManager(), SAVE_TOAST_ID,
+            SystemToast.addOrUpdate(MinecraftUiAccess.getToastManager(this.minecraft), SAVE_TOAST_ID,
                     Component.translatable("storagefinder.config.saved.title"),
                     Component.translatable("storagefinder.config.saved.description"));
             closeScreen();
         } else {
-            SystemToast.addOrUpdate(this.minecraft.getToastManager(), SAVE_TOAST_ID,
+            SystemToast.addOrUpdate(MinecraftUiAccess.getToastManager(this.minecraft), SAVE_TOAST_ID,
                     Component.translatable("storagefinder.config.save_failed.title"),
                     Component.translatable("storagefinder.config.save_failed.description"));
         }
     }
 
     private void closeScreen() {
-        this.minecraft.setScreen(parent);
+        this.minecraft.setScreenAndShow(parent);
     }
 
     private void refreshScreenWidgets() {
