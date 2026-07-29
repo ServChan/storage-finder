@@ -34,7 +34,7 @@
 - Несколько запросов из руки получают разные цвета.
 - При активном поиске снизу слева постоянно показывается компактная HUD-панель с иконкой, названием, цветом, числом совпадений и состоянием маршрута.
 - Все совпавшие хранилища подсвечиваются; стрелки и A*-маршруты строятся максимум к трём ближайшим достижимым хранилищам каждого цвета.
-- Маршрут учитывает стены, полный AABB игрока, ковры, плиты, ступени, снег и другие реальные формы коллизий.
+- Маршрут учитывает стены, полный AABB игрока, диагональное движение, прыжок на один блок, ковры, плиты, ступени, снег и другие реальные формы коллизий.
 - Маршрут избегает жидкостей, огня, кактусов, магмы, порошкового снега и других опасностей, если это включено в настройках.
 - Строгий максимальный радиус — восемь чанков, то есть 128 блоков по горизонтальной евклидовой дистанции.
 - Мод не загружает чанки ради поиска.
@@ -64,6 +64,10 @@
 - состояние `расчёт`, число готовых маршрутов либо `нет пути`.
 
 Панель не перехватывает управление мышью. Для удаления запроса откройте каталог пустой рукой: активные строки находятся сверху и удаляются щелчком.
+
+Если установлен LTS_Server Economy `1.0.2` или новее, внизу панели появляется подсказка. Удерживайте **левый Alt**: каждая строка раскроется и покажет минимальную и среднюю известную цену за один предмет, а также число учтённых торговых точек. Цены берутся по всему текущему серверу, включая его измерения, а не только в радиусе поиска хранилищ. Наборы автоматически пересчитываются в цену за штуку.
+
+Интеграция необязательна: без Economy панель и весь поиск работают как раньше. Если установлена старая несовместимая версия Economy, при удержании левого Alt появляется короткая подсказка об обновлении. Для товара без известных цен выводится отдельное состояние «цен на сервере пока нет». Обычные предметы сопоставляются по типу, зачарованные книги — по конкретным чарам; плагиновые товары с особыми пользовательскими именами не смешиваются с базовым предметом.
 
 #### Текстовый поиск
 
@@ -128,13 +132,17 @@ Legacy-записи без seed переносятся только если н�
 
 ### Маршрут
 
+Один проход A* последовательно находит до трёх достижимых хранилищ и переиспользует уже исследованные узлы. Первый найденный маршрут показывается сразу, пока остальные ещё рассчитываются. Поверхности и допустимость клеток кэшируются на время поиска, а конечные клетки создаются только рядом с физическими блоками хранилища.
+
 Маршрут строится пошаговым multi-goal A* только по уже загруженной клиентом геометрии. На один игровой тик выделяется общий бюджет до 800 A*-узлов, поэтому сложный поиск продолжается несколько кадров и показывает в HUD состояние `расчёт`, не выполняя все 40 000 узлов одним рывком. Конечная точка находится на достижимой высоте сбоку от хранилища, поэтому верхний сундук в вертикальном ряду не отправляет игрока на этаж над ним.
+
+Граф пути использует восемь горизонтальных направлений. Диагональный переход проверяется в нескольких промежуточных точках полным AABB игрока и требует проходимой опоры в обеих соседних ортогональных клетках: открытый квадрат проходится, но маршрут не срезает угол сквозь стену, забор, слишком узкий просвет или внутренний проём лестницы. Диагональ может одновременно менять X/Z и высоту Y и отображается наклонной линией. Подъём до одного полного блока разрешён как обычный прыжок при наличии места для всего тела игрока. Ковры, плиты, ступени, слои снега, кораллы и другой декор обрабатываются по их фактической collision shape. Для ступеней и других неоднородных форм высота проверяется по всей площади ног игрока, а старт маршрута нормализуется к найденной поверхности. Простые вертикальные участки по лестницам, лианам и строительным лесам также поддерживаются.
 
 Для бочек, утопленных заподлицо в пол и направленных крышкой вверх, разрешён подход с соседнего пола и стояние непосредственно над бочкой. Горизонтально направленные бочки используют обычные боковые цели, поэтому маршрут не отправляет игрока на этаж над настенной бочкой.
 
 Кэш проверяет все узлы и периодически обновляется. Когда игрок движется по уже рассчитанному пути, мод переиспользует оставшийся хвост маршрута вместо полного пересчёта. Неудачная тяжёлая попытка A* для неизменных позиции и набора целей повторяется не чаще одного раза в пять секунд; движение игрока запускает новую попытку сразу.
 
-Маршрут является наземным: мод не планирует открывание дверей, плавание, полёт, лазание по лестницам или сложные паркур-прыжки. Поиск ограничен защитным лимитом посещённых A*-узлов, поэтому крайне сложная цель может подсвечиваться без построенного маршрута.
+Маршрут в основном является наземным: мод не планирует открывание закрытых дверей, плавание, полёт, прыжки через разрывы или сложный паркур. Открытые проходы и простые вертикальные лестницы учитываются их обычными collision shape. Поиск ограничен защитным лимитом посещённых A*-узлов, поэтому крайне сложная цель может подсвечиваться без построенного маршрута.
 
 ### Настройки Mod Menu
 
@@ -177,7 +185,7 @@ Legacy-записи без seed переносятся только если н�
 Готовый файл:
 
 ```text
-build/libs/storage-finder-1.0.2.jar
+build/libs/storage-finder-1.0.3.jar
 ```
 
 Проект использует Java 25, Loom 1.17.12 и Gradle Wrapper 9.5.0. Minecraft 26.1.2 и 26.2 необфусцированы, поэтому Mojang mappings не подключаются.
@@ -246,7 +254,7 @@ The mod runs entirely on the client and does not need to be installed on the ser
 - Multiple held-item searches receive different colors.
 - A compact HUD panel remains visible in the bottom-left corner while searches are active, showing the item icon, name, color, match count, and route status.
 - Every matching storage block is highlighted. Arrows and A* routes are built to up to three of the nearest reachable storage blocks for each color.
-- Routes account for walls, the player's full AABB, carpets, slabs, stairs, snow, and other real collision shapes.
+- Routes account for walls, the player's full AABB, diagonal movement, one-block jumps, carpets, slabs, stairs, snow, and other real collision shapes.
 - Routes avoid fluids, fire, cactus, magma, powder snow, and other hazards when hazard avoidance is enabled.
 - The strict maximum radius is eight chunks, or 128 blocks by horizontal Euclidean distance.
 - The mod never loads chunks just to search them.
@@ -276,6 +284,10 @@ The panel appears in the bottom-left corner of the in-game HUD only while at lea
 - the `calculating` state, number of ready routes, or `no route` state.
 
 The panel does not capture mouse input. To remove a query, open the catalog with an empty main hand. Active entries are listed first and can be removed by clicking them.
+
+When LTS_Server Economy `1.0.2` or newer is installed, a hint appears below the panel. Hold **Left Alt** to expand each row with the minimum and average known price per item and the number of included shops. Prices cover the entire current server and its dimensions, rather than only Storage Finder's search radius. Bundle prices are normalized per item.
+
+The integration is optional: Storage Finder and its compact HUD work normally without Economy. Holding Left Alt shows an update hint when an older incompatible Economy version is installed, and a distinct no-data state when Economy has not observed that item. Ordinary items match by type, enchanted books by their specific stored enchantment, while custom-named plugin products are not mixed into the base item.
 
 #### Text search
 
@@ -340,13 +352,17 @@ Protocol limitation: if a server hides world identity and two worlds share the s
 
 ### Routing
 
-Routes are calculated incrementally with multi-goal A* using only geometry already loaded by the client. A shared budget of up to 800 A* nodes is processed per game tick, so a complex search continues across several frames and displays `calculating` in the HUD instead of processing all 40,000 nodes in one burst. The endpoint is placed at a reachable height beside the storage block, preventing an upper chest in a vertical stack from routing the player to the floor above it.
+One A* traversal finds up to three reachable storages while reusing the explored nodes. The first completed route is displayed immediately while the remaining targets continue calculating. Cell surfaces and full-player-AABB checks are cached for the lifetime of the search, and endpoints are generated only at positions adjacent to the physical storage blocks.
+
+Routes are calculated incrementally using only geometry already loaded by the client. A strict shared budget of up to 800 A* nodes is processed per game tick, so a complex search continues across several frames and displays `calculating` in the HUD instead of processing all 40,000 nodes in one burst. The endpoint is placed at a reachable height beside the storage block, preventing an upper chest in a vertical stack from routing the player to the floor above it.
+
+The path graph uses eight horizontal directions. Every diagonal transition samples the player's full AABB and requires traversable support in both neighboring orthogonal cells, allowing open squares while rejecting routes that clip through walls, fences, narrow gaps, or the inside opening of a staircase. A diagonal may change X/Z and Y together and is rendered as a sloped line. A rise of up to one full block is allowed as a normal jump when the complete player body has clearance. Carpets, slabs, stairs, snow layers, coral, and other decoration follow their actual collision shapes. For stairs and other non-uniform shapes, surface height is sampled across the player's complete footprint and the route start is normalized to that surface. Simple vertical ladder, vine, and scaffolding sections are supported as well.
 
 For upward-facing barrels embedded flush with the floor, the route may approach from the neighboring floor or finish directly above the barrel. Horizontally facing wall barrels use normal side goals, so they do not route the player to the floor above them.
 
 The cache validates every node and refreshes periodically. As the player follows a calculated path, the mod reuses the remaining route tail instead of rebuilding the entire path. A failed expensive A* attempt for an unchanged player position and target set is repeated no more than once every five seconds; moving the player starts a new attempt immediately.
 
-Routing is ground-based. The mod does not plan door opening, swimming, flying, ladder climbing, or complex parkour jumps. A safety limit caps the number of visited A* nodes, so an extremely difficult target may remain highlighted without a route.
+Routing is primarily ground-based. The mod does not plan opening closed doors, swimming, flying, jumping across gaps, or complex parkour. Open passages and simple vertical climbs follow their normal collision shapes. A safety limit caps the number of visited A* nodes, so an extremely difficult target may remain highlighted without a route.
 
 ### Mod Menu settings
 
@@ -389,7 +405,7 @@ Do not replace the JAR while Minecraft is running. The JVM may lazily read class
 Output:
 
 ```text
-build/libs/storage-finder-1.0.2.jar
+build/libs/storage-finder-1.0.3.jar
 ```
 
 The project uses Java 25, Loom 1.17.12, and Gradle Wrapper 9.5.0. Minecraft 26.1.2 and 26.2 are unobfuscated, so Mojang mappings are not configured.

@@ -54,6 +54,7 @@ public final class StorageFinderClient implements ClientModInitializer {
     public void onInitializeClient() {
         StorageFinderConfig.load();
         INDEX.load();
+        EconomyPriceBridge.initialize();
         searchKey = KeyMappingHelper.registerKeyMapping(new KeyMapping(
                 "key.storagefinder.search",
                 InputConstants.Type.KEYSYM,
@@ -84,6 +85,7 @@ public final class StorageFinderClient implements ClientModInitializer {
         if (minecraft.level != lastLevel) {
             saveAndClearActiveContainer(minecraft);
             pendingStorage = null;
+            EconomyPriceBridge.clearCache();
             if (lastLevel != null && minecraft.level == null) {
                 WorldScopeTracker.clear();
             }
