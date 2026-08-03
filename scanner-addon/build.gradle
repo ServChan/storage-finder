@@ -1,0 +1,47 @@
+plugins {
+    id 'net.fabricmc.fabric-loom' version "${loom_version}"
+}
+
+version = project.scanner_addon_version
+group = project.maven_group
+def modVersion = project.version.toString()
+def minecraftVersionKey = project.minecraft_version.toString().replace('.', '_')
+def fabricLifecycleEventsVersion = project.property("fabric_lifecycle_events_version_${minecraftVersionKey}")
+def fabricKeyMappingApiVersion = project.property("fabric_key_mapping_api_version_${minecraftVersionKey}")
+
+base { archivesName = "storage-finder-scanner" }
+
+loom {
+    splitEnvironmentSourceSets()
+    mods {
+        "storagefinder_scanner" { sourceSet sourceSets.client }
+    }
+}
+
+dependencies {
+    minecraft "com.mojang:minecraft:${project.minecraft_version}"
+    implementation "net.fabricmc:fabric-loader:${project.loader_version}"
+    implementation "net.fabricmc.fabric-api:fabric-lifecycle-events-v1:${fabricLifecycleEventsVersion}"
+    implementation "net.fabricmc.fabric-api:fabric-key-mapping-api-v1:${fabricKeyMappingApiVersion}"
+
+    // The addon communicates with Storage Finder through normal container interaction,
+    // so it deliberately has no compile-time dependency on the main mod's internals.
+}
+
+tasks.withType(ProcessResources).configureEach {
+    inputs.property "version", modVersion
+    filesMatching("fabric.mod.json") { expand "version": modVersion }
+}
+
+tasks.withType(JavaCompile).configureEach {
+    it.options.release = 25
+    it.options.encoding = "UTF-8"
+    it.options.compilerArgs += ["-Xlint:deprecation"]
+}
+
+java {
+    toolchain.languageVersion = JavaLanguageVersion.of(25)
+    withSourcesJar()
+    sourceCompatibility = JavaVersion.VERSION_25
+    targetCompatibility = JavaVersion.VERSION_25
+}

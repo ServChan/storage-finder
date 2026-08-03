@@ -1,0 +1,12 @@
+{
+  "key.category.storagefinder_scanner.main": "Storage Finder Scanner",
+  "key.storagefinder_scanner.toggle": "Start or stop refreshing storages",
+  "storagefinder_scanner.started": "§aScanner: §f%s storages found",
+  "storagefinder_scanner.none": "§7Scanner: no reachable storages nearby",
+  "storagefinder_scanner.stopped": "§eScanner stopped §7(%s of %s refreshed)",
+  "storagefinder_scanner.finished": "§aScanner finished: §f%s of %s refreshed",
+  "storagefinder_scanner.failed": "§eScanner skipped unreachable storages: §f%s",
+  "storagefinder_scanner.blocked": "§cScanner cannot start while a menu is open",
+  "storagefinder_scanner.moved": "§eScanner stopped because the player moved",
+  "storagefinder_scanner.dimension": "§eScanner stopped because the world changed"
+}

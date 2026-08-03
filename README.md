@@ -28,6 +28,8 @@
 
 - Поиск и запоминание сундуков, сундуков-ловушек, бочек и поставленных шалкеровых ящиков.
 - Эндер-сундуки не индексируются и не участвуют в результатах.
+- Необязательный отдельный аддон `Storage Finder Scanner` может последовательно обновлять видимые контейнеры
+  обычными взаимодействиями; инструкция находится в `scanner-addon/README.md`.
 - Источники данных объединяются: предметные рамки и локально запомненное содержимое контейнеров.
 - Обычные предметы сравниваются по registry-типу. Название, прочность, обычные зачарования и прочие компоненты игнорируются.
 - Зачарованные книги индексируются отдельно по каждому виду зачарования. Уровень и пользовательское имя книги не влияют.
@@ -248,6 +250,8 @@ The mod runs entirely on the client and does not need to be installed on the ser
 
 - Finds and remembers chests, trapped chests, barrels, and placed shulker boxes.
 - Ender Chests are not indexed and never appear in search results.
+- The optional separate `Storage Finder Scanner` addon can refresh visible containers through normal interactions;
+  see `scanner-addon/README.md`.
 - Combines two data sources: item frames and locally remembered container contents.
 - Regular items are matched by registry item type. Custom names, durability, normal enchantments, and other components are ignored.
 - Enchanted books are indexed separately for every stored enchantment type. Enchantment level and custom book name are ignored.

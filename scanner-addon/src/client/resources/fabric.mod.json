@@ -1,0 +1,21 @@
+{
+  "schemaVersion": 1,
+  "id": "storagefinder_scanner",
+  "version": "${version}",
+  "name": "Storage Finder Scanner",
+  "description": "Safely refresh nearby Storage Finder entries through normal container interactions.",
+  "authors": ["LTS_Server"],
+  "license": "MIT",
+  "environment": "client",
+  "entrypoints": {
+    "client": ["org.lts.storagefinder.scanner.StorageFinderScannerClient"]
+  },
+  "depends": {
+    "fabricloader": ">=0.19.3",
+    "minecraft": ">=26.1.2 <=26.2",
+    "java": ">=25",
+    "fabric-key-mapping-api-v1": "*",
+    "fabric-lifecycle-events-v1": "*",
+    "storagefinder": ">=1.0.4"
+  }
+}
