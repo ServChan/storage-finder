@@ -1,45 +1,47 @@
-# Gradle
+# Gradle & Build outputs
 .gradle/
+.gradle-user/
 build/
 out/
+bin/
+classes/
+/libs/
+/mappings/
+/assets/
 
-# Local run directories
+# Minecraft run directories, configs & logs
 run/
 runs/
+config/
 logs/
 crash-reports/
-
-# IDE
-.idea/
-.vscode/
-*.iml
-*.ipr
-*.iws
-.project
-.classpath
-.settings/
-
-# OS/editor files
-.DS_Store
-Thumbs.db
-Desktop.ini
-*.swp
-*.swo
-*~
-
-# Local secrets and overrides
-.env
-.env.*
-local.properties
-gradle-local.properties
-
-# Generated artifacts
 *.log
 *.tmp
 hs_err_pid*
 replay_pid*
+javap*.txt
 
-# Local AI/agent workspace instructions
+# IDE, Editor & Tool directories
+.idea/
+*.iml
+*.ipr
+*.iws
+.vscode/
+.claude/
+.gemini/
+.settings/
+.classpath
+.project
+.factorypath
+*.launch
+scratch/
+
+# OS metadata
+.DS_Store
+Thumbs.db
+desktop.ini
+
+# Agent metadata
 AGENTS.md
 **/AGENTS.md
 CLAUDE.md
