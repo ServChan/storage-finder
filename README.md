@@ -3,6 +3,7 @@
 [![Minecraft](https://img.shields.io/badge/Minecraft-26.1.2--26.2-62b47a)](https://www.minecraft.net/)
 [![Fabric](https://img.shields.io/badge/Fabric-client--side-d7c59a)](https://fabricmc.net/)
 [![Java](https://img.shields.io/badge/Java-25-e76f00)](https://adoptium.net/)
+[![Version](https://img.shields.io/badge/version-1.0.3-4C8BF5)](gradle.properties)
 [![License](https://img.shields.io/badge/license-MIT-blue.svg)](LICENSE)
 
 ## Русский

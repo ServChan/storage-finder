@@ -15,6 +15,7 @@ public final class StorageFinderConfig {
     public static final int MAX_SEARCH_CHUNKS = 8;
     private static final Gson GSON = new GsonBuilder().setPrettyPrinting().create();
     private static final Path PATH = FabricLoader.getInstance().getConfigDir().resolve("storage_finder.json");
+    private static final Path BACKUP_PATH = PATH.resolveSibling("storage_finder.json.bak");
     private static StorageFinderConfig instance = defaults();
     private static long lastModified = -1L;
     private static long nextCheckTime;
@@ -40,7 +41,7 @@ public final class StorageFinderConfig {
             lastModified = Files.getLastModifiedTime(PATH).toMillis();
         } catch (Exception exception) {
             StorageFinderClient.LOGGER.warn("Could not load {}", PATH, exception);
-            instance = defaults();
+            instance = loadBackup();
             lastModified = modifiedTime();
         }
         return instance;
@@ -78,6 +79,9 @@ public final class StorageFinderConfig {
             Files.createDirectories(PATH.getParent());
             try (Writer writer = Files.newBufferedWriter(temporary)) {
                 GSON.toJson(sanitized, writer);
+            }
+            if (Files.isRegularFile(PATH)) {
+                Files.copy(PATH, BACKUP_PATH, StandardCopyOption.REPLACE_EXISTING);
             }
             try {
                 Files.move(temporary, PATH, StandardCopyOption.REPLACE_EXISTING, StandardCopyOption.ATOMIC_MOVE);
@@ -136,6 +140,29 @@ public final class StorageFinderConfig {
     private static void ensureExists() {
         if (!Files.exists(PATH)) {
             save(defaults());
+        }
+    }
+
+    private static StorageFinderConfig loadBackup() {
+        if (!Files.isRegularFile(BACKUP_PATH)) {
+            return defaults();
+        }
+        try (Reader reader = Files.newBufferedReader(BACKUP_PATH)) {
+            StorageFinderConfig recovered = sanitize(GSON.fromJson(reader, StorageFinderConfig.class));
+            StorageFinderClient.LOGGER.warn("Recovered configuration from {}", BACKUP_PATH);
+            try {
+                if (Files.isRegularFile(PATH)) {
+                    Files.move(PATH, PATH.resolveSibling("storage_finder.json.corrupt"),
+                            StandardCopyOption.REPLACE_EXISTING);
+                }
+                Files.copy(BACKUP_PATH, PATH, StandardCopyOption.REPLACE_EXISTING);
+            } catch (Exception exception) {
+                StorageFinderClient.LOGGER.warn("Could not restore primary configuration", exception);
+            }
+            return recovered;
+        } catch (Exception exception) {
+            StorageFinderClient.LOGGER.warn("Could not recover configuration from {}", BACKUP_PATH, exception);
+            return defaults();
         }
     }
 
