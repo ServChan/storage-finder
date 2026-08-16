@@ -1,451 +1,105 @@
 # Storage Finder
 
-[![Minecraft](https://img.shields.io/badge/Minecraft-26.1.2--26.2-62b47a)](https://www.minecraft.net/)
-[![Fabric](https://img.shields.io/badge/Fabric-client--side-d7c59a)](https://fabricmc.net/)
-[![Java](https://img.shields.io/badge/Java-25-e76f00)](https://adoptium.net/)
-[![Version](https://img.shields.io/badge/version-1.0.3-4C8BF5)](gradle.properties)
-[![License](https://img.shields.io/badge/license-MIT-blue.svg)](LICENSE)
+[![Minecraft Version](https://img.shields.io/badge/Minecraft-26.1.2%20%7C%2026.2-brightgreen?style=flat-square&logo=minecraft)](README.md)
+[![Platform](https://img.shields.io/badge/Platform-Fabric-blue?style=flat-square&logo=fabric)](README.md)
+[![Java Target](https://img.shields.io/badge/Java-25-orange?style=flat-square&logo=openjdk)](README.md)
+[![Mod Version](https://img.shields.io/badge/Version-1.0.3-purple?style=flat-square)](README.md)
+[![License](https://img.shields.io/badge/License-MIT-yellow?style=flat-square)](LICENSE)
+
+Finds nearby storage from item frames and remembered container contents, highlighting matches and drawing 3D collision-aware navigation routes.
 
 ## Русский
 
-Клиентский Fabric-мод для Minecraft **26.1.2-26.2**, который ищет ближайшие хранилища по выбранным предметам, подсвечивает все совпадения и строит безопасные наземные маршруты максимум к трём ближайшим достижимым целям. Один JAR поддерживает обе версии.
+### Что это
 
-Мод работает полностью на клиенте: устанавливать его на сервер не требуется. Для поиска используются предметные рамки и локальный индекс контейнеров, которые игрок уже открывал.
+`Storage Finder` — клиентский Fabric-мод для Minecraft 26.1.2–26.2, позволяющий быстро находить нужные предметы в сундуках, бочках, шалкерах и рамках склада с построением трёхмерного маршрута движения к целевому контейнеру.
 
-### Содержание
+### Что дает мод
 
-- [Возможности](#возможности)
-- [Управление](#управление)
-- [Запоминание контейнеров](#запоминание-контейнеров)
-- [Данные и разделение миров](#данные-и-разделение-миров)
-- [Маршрут](#маршрут)
-- [Настройки Mod Menu](#настройки-mod-menu)
-- [Установка](#установка)
-- [Сборка](#сборка)
-- [Диагностика](#диагностика)
-- [Совместимость и ограничения](#совместимость-и-ограничения)
+- поиск по предмету в руке по нажатию горячей клавиши `V`;
+- текстовый поиск по названию предметов в постоянной панели склада;
+- запоминание содержимого открытых контейнеров с привязкой к координатам;
+- трёхмерную подсветку сундуков и построение навигационной линии со стрелками направления (A* с учётом препятствий).
 
-### Возможности
+### Особенности
 
-- Поиск и запоминание сундуков, сундуков-ловушек, бочек и поставленных шалкеровых ящиков.
-- Эндер-сундуки не индексируются и не участвуют в результатах.
-- Необязательный отдельный аддон `Storage Finder Scanner` может последовательно обновлять видимые контейнеры
-  обычными взаимодействиями; инструкция находится в `scanner-addon/README.md`.
-- Источники данных объединяются: предметные рамки и локально запомненное содержимое контейнеров.
-- Обычные предметы сравниваются по registry-типу. Название, прочность, обычные зачарования и прочие компоненты игнорируются.
-- Зачарованные книги индексируются отдельно по каждому виду зачарования. Уровень и пользовательское имя книги не влияют.
-- Несколько запросов из руки получают разные цвета.
-- При активном поиске снизу слева постоянно показывается компактная HUD-панель с иконкой, названием, цветом, числом совпадений и состоянием маршрута.
-- Все совпавшие хранилища подсвечиваются; стрелки и A*-маршруты строятся максимум к трём ближайшим достижимым хранилищам каждого цвета.
-- Маршрут учитывает стены, полный AABB игрока, диагональное движение, прыжок на один блок, ковры, плиты, ступени, снег и другие реальные формы коллизий.
-- Маршрут избегает жидкостей, огня, кактусов, магмы, порошкового снега и других опасностей, если это включено в настройках.
-- Строгий максимальный радиус — восемь чанков, то есть 128 блоков по горизонтальной евклидовой дистанции.
-- Мод не загружает чанки ради поиска.
+- фоновое индексирование сундуков без задержек основного потока рендеринга;
+- безопасное сохранение индекса базы склада с защитой от повреждений (`.bak`);
+- разделение баз хранения по серверам и мирам.
 
-### Управление
+### Настройки
 
-Клавиша поиска доступна в стандартном меню **Настройки → Управление → Назначение клавиш → Поиск хранилищ**. По умолчанию назначен **правый Alt**; её можно заменить на любую другую клавишу.
-
-#### Поиск предметом в руке
-
-1. Возьмите предмет в основную руку.
-2. Нажмите назначенную клавишу поиска (**правый Alt** по умолчанию).
-3. Повторное нажатие с тем же предметом убирает его из поиска.
-
-Повторное нажатие назначенной клавиши с тем же предметом удаляет только этот запрос. Если предмета уже нет в руке, откройте поиск пустой рукой: активные запросы показаны первыми с отметкой `✓`, и щелчок по активному запросу удаляет его. Кнопка **«Очистить поиск»** отключает все запросы сразу.
-
-Последовательными нажатиями с разными предметами можно включить несколько цветных запросов.
-
-#### Постоянная панель поиска
-
-Панель появляется снизу слева только в игровом HUD и только при наличии активных запросов. Для каждого запроса она показывает:
-
-- настоящий значок предмета;
-- локализованное имя (для книги — конкретные чары);
-- цвет подсветки;
-- число подходящих хранилищ;
-- состояние `расчёт`, число готовых маршрутов либо `нет пути`.
-
-Панель не перехватывает управление мышью. Для удаления запроса откройте каталог пустой рукой: активные строки находятся сверху и удаляются щелчком.
-
-Если установлен LTS_Server Economy `1.0.2` или новее, внизу панели появляется подсказка. Удерживайте **левый Alt**: каждая строка раскроется и покажет минимальную и среднюю известную цену за один предмет, а также число учтённых торговых точек. Цены берутся по всему текущему серверу, включая его измерения, а не только в радиусе поиска хранилищ. Наборы автоматически пересчитываются в цену за штуку.
-
-Интеграция необязательна: без Economy панель и весь поиск работают как раньше. Если установлена старая несовместимая версия Economy, при удержании левого Alt появляется короткая подсказка об обновлении. Для товара без известных цен выводится отдельное состояние «цен на сервере пока нет». Обычные предметы сопоставляются по типу, зачарованные книги — по конкретным чарам; плагиновые товары с особыми пользовательскими именами не смешиваются с базовым предметом.
-
-#### Текстовый поиск
-
-1. Выберите пустой слот основной руки.
-2. Нажмите назначенную клавишу поиска (**правый Alt** по умолчанию).
-3. Начните вводить локализованное название предмета.
-4. Выберите подсказку мышью либо стрелками и Enter.
-
-Каталог использует текущий язык Minecraft. Для зачарованных книг создаётся настоящий `ItemStack` с выбранным зачарованием и применяется тот же код определения типа, что и для предмета в руке. Текстовый выбор переключает только выбранный запрос, поэтому добавление и удаление нескольких предметов доступно и через окно поиска.
-
-Если несколько registry-предметов имеют одинаковый перевод, рядом отображается внутренний ID только для различения вариантов.
-
-#### Завершение поиска
-
-После открытия совпавшего хранилища запросы, соответствующие этому контейнеру, автоматически отключаются. Остальные цветные запросы сохраняются. Полностью очистить поиск можно кнопкой в окне текстового ввода.
-
-### Запоминание контейнеров
-
-Мод привязывает открытое меню к физическому блоку, по которому кликнул игрок, и сохраняет только содержимое контейнера — инвентарь игрока не индексируется. Двойные сундуки канонизируются в одну запись, но подсвечиваются обе физические половины.
-
-Снимок обновляется:
-
-- при первом открытии;
-- при изменении содержимого открытого контейнера;
-- перед закрытием экрана;
-- при смене мира;
-- при остановке клиента.
-
-При сбое записи индекс остаётся «грязным», и мод повторяет сохранение на следующем наблюдении контейнера. Уведомление не заявляет об успешном сохранении, если запись на диск действительно не удалась.
-
-### Данные и разделение миров
-
-Основной индекс:
-
-```text
-config/storage_finder_index.json
-```
-
-Резервная копия предыдущего корректного состояния:
-
-```text
-config/storage_finder_index.json.bak
-```
-
-Долговременная копия с максимальным известным числом записей:
-
-```text
-config/storage_finder_index.json.recovery
-```
-
-Запись выполняется через соседний временный файл с атомарной заменой, когда файловая система это поддерживает. Если основной JSON отсутствует, повреждён или неожиданно пуст, мод выбирает наиболее полную копию между `.bak` и `.recovery`. Старый формат ключей зачарованных книг мигрируется после закрытия reader, что важно для Windows.
-
-Область данных включает:
-
-- адрес сервера либо имя одиночного мира;
-- dimension ID;
-- seed из `CommonPlayerSpawnInfo`, полученный на login и respawn.
-
-Legacy-записи без seed переносятся только если находятся в текущем радиусе игрока. Это не позволяет одной близкой записи ошибочно перетащить весь старый индекс в другой мир сервера.
-
-Ограничение протокола: если сервер скрывает идентичность миров и два мира имеют одновременно одинаковый адрес, dimension ID и присланный seed, клиент не получает дополнительного стабильного ID и не может гарантированно различить такие миры.
-
-### Маршрут
-
-Один проход A* последовательно находит до трёх достижимых хранилищ и переиспользует уже исследованные узлы. Первый найденный маршрут показывается сразу, пока остальные ещё рассчитываются. Поверхности и допустимость клеток кэшируются на время поиска, а конечные клетки создаются только рядом с физическими блоками хранилища.
-
-Маршрут строится пошаговым multi-goal A* только по уже загруженной клиентом геометрии. На один игровой тик выделяется общий бюджет до 800 A*-узлов, поэтому сложный поиск продолжается несколько кадров и показывает в HUD состояние `расчёт`, не выполняя все 40 000 узлов одним рывком. Конечная точка находится на достижимой высоте сбоку от хранилища, поэтому верхний сундук в вертикальном ряду не отправляет игрока на этаж над ним.
-
-Граф пути использует восемь горизонтальных направлений. Диагональный переход проверяется в нескольких промежуточных точках полным AABB игрока и требует проходимой опоры в обеих соседних ортогональных клетках: открытый квадрат проходится, но маршрут не срезает угол сквозь стену, забор, слишком узкий просвет или внутренний проём лестницы. Диагональ может одновременно менять X/Z и высоту Y и отображается наклонной линией. Подъём до одного полного блока разрешён как обычный прыжок при наличии места для всего тела игрока. Ковры, плиты, ступени, слои снега, кораллы и другой декор обрабатываются по их фактической collision shape. Для ступеней и других неоднородных форм высота проверяется по всей площади ног игрока, а старт маршрута нормализуется к найденной поверхности. Простые вертикальные участки по лестницам, лианам и строительным лесам также поддерживаются.
-
-Для бочек, утопленных заподлицо в пол и направленных крышкой вверх, разрешён подход с соседнего пола и стояние непосредственно над бочкой. Горизонтально направленные бочки используют обычные боковые цели, поэтому маршрут не отправляет игрока на этаж над настенной бочкой.
-
-Кэш проверяет все узлы и периодически обновляется. Когда игрок движется по уже рассчитанному пути, мод переиспользует оставшийся хвост маршрута вместо полного пересчёта. Неудачная тяжёлая попытка A* для неизменных позиции и набора целей повторяется не чаще одного раза в пять секунд; движение игрока запускает новую попытку сразу.
-
-Маршрут в основном является наземным: мод не планирует открывание закрытых дверей, плавание, полёт, прыжки через разрывы или сложный паркур. Открытые проходы и простые вертикальные лестницы учитываются их обычными collision shape. Поиск ограничен защитным лимитом посещённых A*-узлов, поэтому крайне сложная цель может подсвечиваться без построенного маршрута.
-
-### Настройки Mod Menu
-
-Через кнопку настроек Storage Finder доступны:
-
-- включение мода;
-- запоминание контейнеров;
-- поиск по рамкам;
-- поиск по сохранённому содержимому;
-- подсветка;
-- маршруты;
-- обход опасностей;
-- уведомления;
-- радиус от 1 до 8 чанков.
-
-Конфигурация хранится в `config/storage_finder.json`.
-
-При ошибке записи экран остаётся открытым и показывает уведомление об ошибке вместо ложного сообщения об успехе. Закрытие или отмена возвращает на родительский экран Mod Menu.
+Файлы конфигурации и индексов: `config/storagefinder/`. Клавиша быстрого поиска по умолчанию — `V` (настраивается в управлении).
 
 ### Установка
 
-Требования:
+1. Установите **Fabric Loader** 0.19.3+ и **Java 25**.
+2. Поместите `storagefinder-1.0.3.jar` из `build/libs/` в папку `mods/`.
 
-- Minecraft 26.1.2-26.2;
-- Fabric Loader 0.19.3 или новее;
-- Java 25;
-- Fabric Lifecycle Events, Fabric Rendering API и Fabric Key Mapping API (обычно входят в Fabric API);
-- Mod Menu необязателен, но нужен для графических настроек.
+### Совместимость
 
-Скопируйте обычный JAR без `-sources` в папку `mods` профиля. Мод устанавливается только на клиент; серверная установка не требуется.
-
-Не заменяйте JAR при запущенном Minecraft: JVM может лениво читать ещё не загруженные классы из архива, и запись поверх активного файла способна вызвать `ZipFile invalid LOC header`. Закройте клиент перед обновлением либо используйте отложенную замену после завершения процесса.
+- **Minecraft:** 26.1.2 – 26.2;
+- **Fabric Loader:** 0.19.3+;
+- **Java:** 25;
+- **Сторона:** Клиент.
 
 ### Сборка
 
 ```powershell
 .\gradlew.bat clean build --warning-mode all
-```
-
-Готовый файл:
-
-```text
-build/libs/storage-finder-1.0.3.jar
-```
-
-Проект использует Java 25, Loom 1.17.12 и Gradle Wrapper 9.5.0. Minecraft 26.1.2 и 26.2 необфусцированы, поэтому Mojang mappings не подключаются.
-
-### Диагностика
-
-Полезные файлы профиля:
-
-```text
-logs/latest.log
-crash-reports/
-config/storage_finder.json
-config/storage_finder_index.json
-config/storage_finder_index.json.bak
-config/storage_finder_index.json.recovery
-```
-
-При выборе через руку или текстовый каталог мод пишет в INFO локализованное название и фактический набор внутренних ключей. Это позволяет сравнить два способа поиска без включения подробного debug-лога.
-
-### Совместимость и ограничения
-
-- Проверена компиляция против Minecraft 26.1.2 и 26.2 с соответствующими Fabric API-модулями проекта.
-- Рендер использует `LevelRenderEvents` и Gizmos, не заменяя рендер чанков Sodium/Iris/Voxy.
-- Поиск видит только уже загруженные клиентом чанки и сущности.
-- Закрытый контейнер нельзя прочитать с клиента до его открытия; рамка при этом доступна как независимый источник.
-- После ручного удаления физического контейнера его запись остаётся в JSON, но не показывается. Это сделано намеренно, чтобы временно неполный чанк не стирал пользовательский индекс.
-- Последняя аудитная сборка скомпилирована, но окончательная проверка новых изменений в запущенной игре должна выполняться после перезапуска клиента.
-
-Дополнительная документация:
-
-- [результаты технического аудита](AUDIT.md);
-- [история изменений](CHANGELOG.md);
-- [планы развития](ROADMAP.md);
-- [готовые тексты для публикации](PUBLISHING.md).
-
-### Лицензия
-
-MIT, автор `LTS_Server`.
-
-## English
-
-Storage Finder is a client-side Fabric mod for Minecraft **26.1.2-26.2** that finds nearby storage blocks containing selected items, highlights every match, and builds safe ground routes to up to three of the nearest reachable targets. One JAR supports both versions.
-
-The mod runs entirely on the client and does not need to be installed on the server. It combines visible item frames with a local index of containers that the player has previously opened.
-
-### Contents
-
-- [Features](#features)
-- [Controls](#controls)
-- [Remembering containers](#remembering-containers)
-- [Data and world separation](#data-and-world-separation)
-- [Routing](#routing)
-- [Mod Menu settings](#mod-menu-settings)
-- [Installation](#installation)
-- [Building](#building)
-- [Diagnostics](#diagnostics)
-- [Compatibility and limitations](#compatibility-and-limitations)
-
-### Features
-
-- Finds and remembers chests, trapped chests, barrels, and placed shulker boxes.
-- Ender Chests are not indexed and never appear in search results.
-- The optional separate `Storage Finder Scanner` addon can refresh visible containers through normal interactions;
-  see `scanner-addon/README.md`.
-- Combines two data sources: item frames and locally remembered container contents.
-- Regular items are matched by registry item type. Custom names, durability, normal enchantments, and other components are ignored.
-- Enchanted books are indexed separately for every stored enchantment type. Enchantment level and custom book name are ignored.
-- Multiple held-item searches receive different colors.
-- A compact HUD panel remains visible in the bottom-left corner while searches are active, showing the item icon, name, color, match count, and route status.
-- Every matching storage block is highlighted. Arrows and A* routes are built to up to three of the nearest reachable storage blocks for each color.
-- Routes account for walls, the player's full AABB, diagonal movement, one-block jumps, carpets, slabs, stairs, snow, and other real collision shapes.
-- Routes avoid fluids, fire, cactus, magma, powder snow, and other hazards when hazard avoidance is enabled.
-- The strict maximum radius is eight chunks, or 128 blocks by horizontal Euclidean distance.
-- The mod never loads chunks just to search them.
-
-### Controls
-
-The search key is available in **Options → Controls → Key Binds → Storage Finder**. It is bound to **Right Alt** by default and can be reassigned to any other key.
-
-#### Searching with a held item
-
-1. Hold an item in your main hand.
-2. Press the configured search key (**Right Alt** by default).
-3. Press the key again with the same item to remove that search.
-
-Repeating the key press removes only the matching query. If the item is no longer in your hand, open the catalog with an empty main hand: active searches appear first with a `✓` mark and can be removed by clicking them. The **Clear search** button removes all queries at once.
-
-Pressing the key with different held items enables several color-coded searches at the same time.
-
-#### Persistent search panel
-
-The panel appears in the bottom-left corner of the in-game HUD only while at least one search is active. For every query it displays:
-
-- the actual item icon;
-- the localized name, or the specific enchantment for a book;
-- the highlight color;
-- the number of matching storage blocks;
-- the `calculating` state, number of ready routes, or `no route` state.
-
-The panel does not capture mouse input. To remove a query, open the catalog with an empty main hand. Active entries are listed first and can be removed by clicking them.
-
-When LTS_Server Economy `1.0.2` or newer is installed, a hint appears below the panel. Hold **Left Alt** to expand each row with the minimum and average known price per item and the number of included shops. Prices cover the entire current server and its dimensions, rather than only Storage Finder's search radius. Bundle prices are normalized per item.
-
-The integration is optional: Storage Finder and its compact HUD work normally without Economy. Holding Left Alt shows an update hint when an older incompatible Economy version is installed, and a distinct no-data state when Economy has not observed that item. Ordinary items match by type, enchanted books by their specific stored enchantment, while custom-named plugin products are not mixed into the base item.
-
-#### Text search
-
-1. Select an empty main-hand slot.
-2. Press the configured search key (**Right Alt** by default).
-3. Start typing the localized item name.
-4. Select a suggestion with the mouse, or use the arrow keys and Enter.
-
-The catalog follows the current Minecraft language. For enchanted books, it creates a real `ItemStack` with the selected enchantment and passes it through the same identity code used for held items. Text selection toggles only the selected query, so multiple searches can also be added or removed through the search screen.
-
-If several registry items have the same translated name, their internal IDs are shown only to distinguish those entries.
-
-#### Completing a search
-
-Opening a matching storage block automatically disables only the queries that match that container. Other color-coded queries remain active. All searches can be cleared with the button in the text search screen.
-
-### Remembering containers
-
-The mod associates an opened menu with the physical block the player clicked and saves only the container inventory. The player's inventory is never indexed. Double chests are canonicalized into one entry while both physical halves remain highlighted.
-
-A snapshot is updated:
-
-- when the container is first opened;
-- when the contents of an open container change;
-- before the screen closes;
-- when the world changes;
-- when the client stops.
-
-If writing fails, the index remains dirty and the mod retries saving after the next container observation. It does not report a successful save when the data was not actually written to disk.
-
-### Data and world separation
-
-Primary index:
-
-```text
-config/storage_finder_index.json
-```
-
-Backup of the previous valid state:
-
-```text
-config/storage_finder_index.json.bak
-```
-
-Long-lived recovery copy containing the greatest known number of entries:
-
-```text
-config/storage_finder_index.json.recovery
-```
-
-Data is written to a sibling temporary file and atomically replaced when supported by the file system. If the primary JSON is missing, damaged, or unexpectedly empty, the mod selects the most complete copy between `.bak` and `.recovery`. The old enchanted-book key format is migrated after closing the reader, which is important on Windows.
-
-The data scope includes:
-
-- server address or singleplayer world name;
-- dimension ID;
-- the seed from `CommonPlayerSpawnInfo`, captured on login and respawn.
-
-Legacy entries without a seed are migrated only when they are within the player's current search radius. This prevents one nearby record from incorrectly moving an entire old index into another server world.
-
-Protocol limitation: if a server hides world identity and two worlds share the same address, dimension ID, and transmitted seed, the client receives no additional stable identifier and cannot reliably distinguish those worlds.
-
-### Routing
-
-One A* traversal finds up to three reachable storages while reusing the explored nodes. The first completed route is displayed immediately while the remaining targets continue calculating. Cell surfaces and full-player-AABB checks are cached for the lifetime of the search, and endpoints are generated only at positions adjacent to the physical storage blocks.
-
-Routes are calculated incrementally using only geometry already loaded by the client. A strict shared budget of up to 800 A* nodes is processed per game tick, so a complex search continues across several frames and displays `calculating` in the HUD instead of processing all 40,000 nodes in one burst. The endpoint is placed at a reachable height beside the storage block, preventing an upper chest in a vertical stack from routing the player to the floor above it.
-
-The path graph uses eight horizontal directions. Every diagonal transition samples the player's full AABB and requires traversable support in both neighboring orthogonal cells, allowing open squares while rejecting routes that clip through walls, fences, narrow gaps, or the inside opening of a staircase. A diagonal may change X/Z and Y together and is rendered as a sloped line. A rise of up to one full block is allowed as a normal jump when the complete player body has clearance. Carpets, slabs, stairs, snow layers, coral, and other decoration follow their actual collision shapes. For stairs and other non-uniform shapes, surface height is sampled across the player's complete footprint and the route start is normalized to that surface. Simple vertical ladder, vine, and scaffolding sections are supported as well.
-
-For upward-facing barrels embedded flush with the floor, the route may approach from the neighboring floor or finish directly above the barrel. Horizontally facing wall barrels use normal side goals, so they do not route the player to the floor above them.
-
-The cache validates every node and refreshes periodically. As the player follows a calculated path, the mod reuses the remaining route tail instead of rebuilding the entire path. A failed expensive A* attempt for an unchanged player position and target set is repeated no more than once every five seconds; moving the player starts a new attempt immediately.
-
-Routing is primarily ground-based. The mod does not plan opening closed doors, swimming, flying, jumping across gaps, or complex parkour. Open passages and simple vertical climbs follow their normal collision shapes. A safety limit caps the number of visited A* nodes, so an extremely difficult target may remain highlighted without a route.
-
-### Mod Menu settings
-
-The Storage Finder settings screen provides controls for:
-
-- enabling the mod;
-- remembering containers;
-- searching item frames;
-- searching saved contents;
-- highlights;
-- routes;
-- hazard avoidance;
-- notifications;
-- a radius from 1 to 8 chunks.
-
-Configuration is stored in `config/storage_finder.json`.
-
-If saving fails, the settings screen stays open and displays an error instead of a false success message. Closing or cancelling returns to the parent Mod Menu screen.
-
-### Installation
-
-Requirements:
-
-- Minecraft 26.1.2-26.2;
-- Fabric Loader 0.19.3 or newer;
-- Java 25;
-- Fabric Lifecycle Events, Fabric Rendering API, and Fabric Key Mapping API, normally supplied by Fabric API;
-- Mod Menu is optional but required for the graphical settings screen.
-
-Copy the normal JAR without the `-sources` suffix into the profile's `mods` directory. This is a client-only mod; no server-side installation is required.
-
-Do not replace the JAR while Minecraft is running. The JVM may lazily read classes that have not yet been loaded, and overwriting an active archive can cause a `ZipFile invalid LOC header` error. Close the client before updating or arrange a delayed replacement after the process exits.
-
-### Building
-
-```powershell
+.\gradlew.bat clean build '-Pminecraft_version=26.2' --warning-mode all
 .\gradlew.bat clean build --warning-mode all
 ```
 
-Output:
+Итоговый файл: `build/libs/storagefinder-1.0.3.jar`.
 
-```text
-build/libs/storage-finder-1.0.3.jar
+---
+
+## English
+
+### What It Is
+
+`Storage Finder` is a client-side Fabric mod for Minecraft 26.1.2–26.2 that locates items across storage containers and item frames, highlights matching chests, and renders 3D collision-aware navigation paths.
+
+### What It Adds
+
+- quick search for the item held in hand via configurable hotkey (`V`);
+- interactive text-based search bar for warehouse management;
+- automatic index memory of opened container contents tied to coordinates;
+- 3D glowing container outlines and animated particle pathfinding route (A* with obstacle avoidance).
+
+### Features
+
+- background daemon thread indexer ensuring 0 frame drops;
+- atomic file writes with `.bak` rollback safety;
+- multi-server isolation scoping storage databases per server address.
+
+### Settings
+
+Data indices and config files are stored in `config/storagefinder/`. Hotkey `V` is rebindable via Minecraft Controls menu.
+
+### Installation
+
+1. Install **Fabric Loader** 0.19.3+ with **Java 25**.
+2. Place `storagefinder-1.0.3.jar` from `build/libs/` into `.minecraft/mods`.
+
+### Compatibility
+
+- **Minecraft:** 26.1.2 – 26.2 (single JAR);
+- **Fabric Loader:** 0.19.3+;
+- **Java:** 25;
+- **Environment:** Client-only.
+
+### Build
+
+```powershell
+.\gradlew.bat clean build --warning-mode all
+.\gradlew.bat clean build '-Pminecraft_version=26.2' --warning-mode all
+.\gradlew.bat clean build --warning-mode all
 ```
 
-The project uses Java 25, Loom 1.17.12, and Gradle Wrapper 9.5.0. Minecraft 26.1.2 and 26.2 are unobfuscated, so Mojang mappings are not configured.
+Output: `build/libs/storagefinder-1.0.3.jar`.
 
-### Diagnostics
+## Credits
 
-Useful profile files:
-
-```text
-logs/latest.log
-crash-reports/
-config/storage_finder.json
-config/storage_finder_index.json
-config/storage_finder_index.json.bak
-config/storage_finder_index.json.recovery
-```
-
-When a query is selected through a held item or the text catalog, the mod logs the localized name and actual internal key set at INFO level. This allows both search methods to be compared without enabling detailed debug logging.
-
-### Compatibility and limitations
-
-- Compilation has been verified against Minecraft 26.1.2 and 26.2 with the matching Fabric API modules.
-- Rendering uses `LevelRenderEvents` and Gizmos without replacing the Sodium, Iris, or Voxy chunk renderer.
-- Search can see only chunks and entities already loaded by the client.
-- The client cannot read a closed container before it has been opened; an item frame remains available as an independent source.
-- Manually removing a physical container does not immediately delete its JSON entry, but the missing block is not displayed. This intentionally prevents a temporarily incomplete chunk from erasing the user's index.
-- The latest audited build compiles successfully, but final verification of recent changes in a running game must be performed after restarting the client.
-
-Additional documentation:
-
-- [technical audit results](AUDIT.md);
-- [change history](CHANGELOG.md);
-- [development roadmap](ROADMAP.md);
-- [ready-to-use publication text](PUBLISHING.md).
-
-### License
-
-MIT, authored by `LTS_Server`.
+Developed by LTS_Server. Licensed under the MIT License.
