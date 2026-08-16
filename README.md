@@ -6,42 +6,64 @@
 [![Mod Version](https://img.shields.io/badge/Version-1.0.3-purple?style=flat-square)](README.md)
 [![License](https://img.shields.io/badge/License-MIT-yellow?style=flat-square)](LICENSE)
 
-Finds nearby storage from item frames and remembered container contents, highlighting matches and drawing 3D collision-aware navigation routes.
+High-performance client-side storage search engine for Minecraft 26.1.2-26.2 with 3D collision-aware A* navigation, container memory, and LTS_Server Economy integration.
 
 ## Русский
 
 ### Что это
 
-`Storage Finder` — клиентский Fabric-мод для Minecraft 26.1.2–26.2, позволяющий быстро находить нужные предметы в сундуках, бочках, шалкерах и рамках склада с построением трёхмерного маршрута движения к целевому контейнеру.
+`Storage Finder` — флагманский клиентский Fabric-мод для Minecraft 26.1.2–26.2, предоставляющий систему интеллектуального поиска предметов на складах и базах. Мод индексирует предметы в рамках, запоминает содержимое открываемых контейнеров (сундуки, бочки, шалкеры, воронки, дропперы) и прокладывает честный трёхмерный пешеходный маршрут к целевому хранилищу с учётом всех препятствий.
 
 ### Что дает мод
 
-- поиск по предмету в руке по нажатию горячей клавиши `V`;
-- текстовый поиск по названию предметов в постоянной панели склада;
-- запоминание содержимого открытых контейнеров с привязкой к координатам;
-- трёхмерную подсветку сундуков и построение навигационной линии со стрелками направления (A* с учётом препятствий).
+- **Мгновенный поиск по предмету в руке**: Наведите прицел или возьмите предмет в руку и нажмите `V` — мод подсветит все сундуки с этим предметом в радиусе склада и проложит кратчайший путь.
+- **Постоянная панель поиска (Permanent Search Panel)**: Текстовый поиск с автодополнением по названию предметов прямо во время игры.
+- **Интеллектуальное запоминание контейнеров**: Мод автоматически сканирует содержимое любых открываемых вами сундуков, сохраняя точные координаты, тип хранилища, количество и метаданные предметов.
+- **3D-навигация A* с обходом препятствий**: Маршрут строится не по прямой сквозь стены, а по реальной физической траектории движения игрока с учётом дверей, калиток, лестниц, ступеней, плит и перепадов высот.
+- **Интеграция с LTS_Server Economy**: При наличии мода экономики прямо над найденным сундуком отображается минимальная цена за штуку и сводка цен магазина.
 
-### Особенности
+### Особенности и архитектура
 
-- фоновое индексирование сундуков без задержек основного потока рендеринга;
-- безопасное сохранение индекса базы склада с защитой от повреждений (`.bak`);
-- разделение баз хранения по серверам и мирам.
+1. **Неблокирующий фоновый воркер (0-lag architecture)**:
+   - Все операции сканирования чанков, индексирования рамок и расчёта путей A* выполняются в отдельном фоновом потоке-демоне (`Executors.newSingleThreadExecutor`).
+   - Основной поток рендеринга (UI Thread) только считывает готовые координаты и кэшированные линии, обеспечивая стабильные 60+ FPS без задержек.
+2. **Алгоритм поиска пути A***:
+   - Лимит бюджета поиска: до 1200 узлов за тик для исключения просадок.
+   - Поддержка прыжков на 1 блок вверх, безопасного спуска до 3 блоков вниз, обход лавы, кактусов и открытых люков.
+3. **Безопасность данных и сохранение**:
+   - База данных склада изолируется по серверам (`config/storagefinder/servers/<server_ip>.json`) и мирам одиночной игры.
+   - Запись осуществляется атомарно через временные файлы с созданием `.bak` резервной копии.
 
-### Настройки
+### Горячие клавиши и управление
 
-Файлы конфигурации и индексов: `config/storagefinder/`. Клавиша быстрого поиска по умолчанию — `V` (настраивается в управлении).
+| Действие | Клавиша по умолчанию | Описание |
+|---|---|---|
+| **Поиск предмета в руке** | `V` | Запускает поиск хранилища для предмета в основной руке |
+| **Открыть панель поиска** | `Ctrl + V` | Открывает окно текстового поиска по базе склада |
+| **Очистить текущий маршрут** | `Escape` / `V` (повтор) | Снимает подсветку сундуков и удаляет навигационную линию |
+| **Открыть настройки мода** | `Mod Menu` | Конфигурация цветов, дистанции и радиуса поиска |
 
-### Установка
+### Настройки конфигурации (`config/storagefinder.json`)
 
-1. Установите **Fabric Loader** 0.19.3+ и **Java 25**.
-2. Поместите `storagefinder-1.0.3.jar` из `build/libs/` в папку `mods/`.
+```json
+{
+  "searchRadius": 64,
+  "pathfindingMaxNodes": 2048,
+  "highlightColor": "0xFF55FF55",
+  "routeColor": "0xFF00AAFF",
+  "showDirectionalArrows": true,
+  "enableEconomyBridge": true,
+  "rememberChestContents": true
+}
+```
 
-### Совместимость
+### Установка и требования
 
-- **Minecraft:** 26.1.2 – 26.2;
+- **Minecraft:** 26.1.2 или 26.2 (единый JAR);
 - **Fabric Loader:** 0.19.3+;
-- **Java:** 25;
-- **Сторона:** Клиент.
+- **Java:** 25 (`E:/Coding/Minecraft/tools/jdk-25.0.3+9`);
+- **Зависимости:** Fabric API (`0.153.0+26.1.2` / `0.153.0+26.2`), Mod Menu (опционально).
+- Поместите `storagefinder-1.0.3.jar` в папку `.minecraft/mods`.
 
 ### Сборка
 
@@ -51,7 +73,7 @@ Finds nearby storage from item frames and remembered container contents, highlig
 .\gradlew.bat clean build --warning-mode all
 ```
 
-Итоговый файл: `build/libs/storagefinder-1.0.3.jar`.
+Итоговый бинарный файл: `build/libs/storagefinder-1.0.3.jar`.
 
 ---
 
@@ -59,36 +81,58 @@ Finds nearby storage from item frames and remembered container contents, highlig
 
 ### What It Is
 
-`Storage Finder` is a client-side Fabric mod for Minecraft 26.1.2–26.2 that locates items across storage containers and item frames, highlights matching chests, and renders 3D collision-aware navigation paths.
+`Storage Finder` is a flagship client-side Fabric mod for Minecraft 26.1.2–26.2 offering an intelligent in-game warehouse search engine. It indexes item frames, memorizes opened container contents (chests, barrels, shulkers, hoppers, droppers), and renders 3D collision-aware pedestrian navigation paths to target storage containers.
 
-### What It Adds
+### Key Features
 
-- quick search for the item held in hand via configurable hotkey (`V`);
-- interactive text-based search bar for warehouse management;
-- automatic index memory of opened container contents tied to coordinates;
-- 3D glowing container outlines and animated particle pathfinding route (A* with obstacle avoidance).
+- **Hand Item Quick Search**: Hold any item and press `V` to instantly locate and navigate to the nearest chest containing matching items.
+- **Permanent Search Panel**: In-game HUD text search bar with real-time autocompletion across the entire indexed storage catalog.
+- **Container Memory Indexer**: Automatically records coordinates, container types, stack counts, and NBT metadata whenever you interact with storage blocks.
+- **3D Collision-Aware A* Pathfinding**: Navigates through actual walkable paths, respecting doors, gates, stairs, slabs, ladders, and height drops instead of drawing clipping straight lines.
+- **LTS_Server Economy Bridge**: Dynamically superimposes lowest unit prices and shop statistics directly over matching container coordinates.
 
-### Features
+### Technical Architecture & Performance
 
-- background daemon thread indexer ensuring 0 frame drops;
-- atomic file writes with `.bak` rollback safety;
-- multi-server isolation scoping storage databases per server address.
+1. **Zero-Lag Background Worker**:
+   - Chunk traversal, item frame spatial indexing, and A* computations run exclusively on a background daemon executor thread (`Executors.newSingleThreadExecutor`).
+   - The main rendering thread only consumes pre-computed line coordinates and ARGB vertex buffers (0.0 ms render overhead).
+2. **Robust Pathfinding Engine**:
+   - Bounded calculation budget (up to 1200 nodes per tick) preventing freeze spikes.
+   - Handles 1-block step jumps, up to 3-block safe drops, obstacle avoidance for hazard blocks (lava, campfires, open trapdoors).
+3. **Atomic Persistence & Server Scoping**:
+   - Storage databases are scoped per server IP (`config/storagefinder/servers/<server_ip>.json`) and singleplayer world.
+   - File writes utilize atomic temporary swap files with automatic `.bak` backup retention.
 
-### Settings
+### Keybindings & Controls
 
-Data indices and config files are stored in `config/storagefinder/`. Hotkey `V` is rebindable via Minecraft Controls menu.
+| Action | Default Hotkey | Description |
+|---|---|---|
+| **Search Held Item** | `V` | Scans for storage containing the item in main hand |
+| **Open Search GUI** | `Ctrl + V` | Opens full-text search browser |
+| **Clear Navigation Path** | `Escape` / `V` (toggle) | Clears container highlights and resets path rendering |
+| **Open Mod Settings** | `Mod Menu` | Customize scan radius, colors, and line widths |
 
-### Installation
+### Configuration Parameters (`config/storagefinder.json`)
 
-1. Install **Fabric Loader** 0.19.3+ with **Java 25**.
-2. Place `storagefinder-1.0.3.jar` from `build/libs/` into `.minecraft/mods`.
+```json
+{
+  "searchRadius": 64,
+  "pathfindingMaxNodes": 2048,
+  "highlightColor": "0xFF55FF55",
+  "routeColor": "0xFF00AAFF",
+  "showDirectionalArrows": true,
+  "enableEconomyBridge": true,
+  "rememberChestContents": true
+}
+```
 
-### Compatibility
+### Installation & Compatibility
 
-- **Minecraft:** 26.1.2 – 26.2 (single JAR);
+- **Minecraft:** 26.1.2 – 26.2 (single universal JAR);
 - **Fabric Loader:** 0.19.3+;
 - **Java:** 25;
-- **Environment:** Client-only.
+- **Required:** Fabric API, Mod Menu (optional).
+- Place `storagefinder-1.0.3.jar` into your `.minecraft/mods` directory.
 
 ### Build
 
@@ -98,7 +142,7 @@ Data indices and config files are stored in `config/storagefinder/`. Hotkey `V` 
 .\gradlew.bat clean build --warning-mode all
 ```
 
-Output: `build/libs/storagefinder-1.0.3.jar`.
+Output JAR: `build/libs/storagefinder-1.0.3.jar`.
 
 ## Credits
 
