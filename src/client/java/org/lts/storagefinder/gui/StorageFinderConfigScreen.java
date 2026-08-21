@@ -70,31 +70,12 @@ public final class StorageFinderConfigScreen extends Screen {
         }).bounds(left + contentWidth - radiusButtonWidth, y, radiusButtonWidth, BUTTON_HEIGHT).build());
 
         y += 26;
-        int anchorWidth = (contentWidth - gap) / 2;
-        addRenderableWidget(Button.builder(hudAnchorLabel(), button -> {
-            config.hudAnchor = switch (config.hudAnchor) {
-                case "TOP_LEFT" -> "TOP_RIGHT";
-                case "TOP_RIGHT" -> "BOTTOM_RIGHT";
-                case "BOTTOM_RIGHT" -> "BOTTOM_LEFT";
-                default -> "TOP_LEFT";
-            };
-            refreshScreenWidgets();
-        }).bounds(left, y, anchorWidth, BUTTON_HEIGHT).build());
-        int offsetLeft = left + anchorWidth + gap;
-        int smallWidth = 34;
-        addRenderableWidget(Button.builder(Component.literal("−"), button -> {
-            config.hudOffsetY = Math.max(0, config.hudOffsetY - 8);
-            refreshScreenWidgets();
-        }).bounds(offsetLeft, y, smallWidth, BUTTON_HEIGHT).build());
-        addRenderableWidget(Button.builder(hudOffsetLabel(), button -> {
-            config.hudOffsetY = 48;
-            refreshScreenWidgets();
-        }).bounds(offsetLeft + smallWidth + gap, y,
-                anchorWidth - smallWidth * 2 - gap * 2, BUTTON_HEIGHT).build());
-        addRenderableWidget(Button.builder(Component.literal("+"), button -> {
-            config.hudOffsetY = Math.min(200, config.hudOffsetY + 8);
-            refreshScreenWidgets();
-        }).bounds(left + contentWidth - smallWidth, y, smallWidth, BUTTON_HEIGHT).build());
+        addRenderableWidget(Button.builder(Component.translatable("storagefinder.config.hud_settings"), button ->
+                minecraft.setScreenAndShow(new StorageHudConfigScreen(this, config)))
+                .bounds(left, y, columnWidth, BUTTON_HEIGHT).build());
+        addRenderableWidget(Button.builder(Component.translatable("storagefinder.config.route_settings"), button ->
+                minecraft.setScreenAndShow(new StorageRouteConfigScreen(this, config)))
+                .bounds(left + columnWidth + gap, y, columnWidth, BUTTON_HEIGHT).build());
 
         int bottomY = this.height - 30;
         int bottomButtonWidth = (contentWidth - gap * 2) / 3;
@@ -145,15 +126,6 @@ public final class StorageFinderConfigScreen extends Screen {
     private Component radiusLabel() {
         return Component.translatable("storagefinder.config.radius", config.searchRadiusChunks,
                 config.searchRadiusChunks * 16);
-    }
-
-    private Component hudAnchorLabel() {
-        return Component.translatable("storagefinder.config.hud_anchor",
-                Component.translatable("storagefinder.config.hud_anchor." + config.hudAnchor.toLowerCase()));
-    }
-
-    private Component hudOffsetLabel() {
-        return Component.translatable("storagefinder.config.hud_offset", config.hudOffsetY);
     }
 
     private static Component toggleLabel(String key, boolean value) {

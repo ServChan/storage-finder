@@ -17,6 +17,7 @@ public final class StorageFinderConfig {
     private static final Path PATH = FabricLoader.getInstance().getConfigDir().resolve("storage_finder.json");
     private static final Path BACKUP_PATH = PATH.resolveSibling("storage_finder.json.bak");
     private static StorageFinderConfig instance = defaults();
+    private static boolean primaryValid = true;
     private static long lastModified = -1L;
     private static long nextCheckTime;
 
@@ -27,20 +28,30 @@ public final class StorageFinderConfig {
     public boolean highlightEnabled = true;
     public boolean routeEnabled = true;
     public boolean avoidHazards = true;
+    public boolean routeAllowSwimming = true;
     public boolean showMessages = true;
+    public int routeMaxRoutes = 3;
+    public int routeNodeBudget = 800;
     public int searchRadiusChunks = MAX_SEARCH_CHUNKS;
     public String hudAnchor = "BOTTOM_RIGHT";
     public int hudOffsetX = 0;
     public int hudOffsetY = 48;
+    public boolean hudCompact = false;
+    public boolean hudShowDistance = true;
+    public boolean hudShowFreshness = true;
+    public int hudMaxVisible = 6;
+    public int hudOpacityPercent = 72;
 
     public static StorageFinderConfig load() {
         ensureExists();
         try (Reader reader = Files.newBufferedReader(PATH)) {
             StorageFinderConfig loaded = GSON.fromJson(reader, StorageFinderConfig.class);
             instance = sanitize(loaded == null ? defaults() : loaded);
+            primaryValid = true;
             lastModified = Files.getLastModifiedTime(PATH).toMillis();
         } catch (Exception exception) {
             StorageFinderClient.LOGGER.warn("Could not load {}", PATH, exception);
+            primaryValid = false;
             instance = loadBackup();
             lastModified = modifiedTime();
         }
@@ -80,7 +91,7 @@ public final class StorageFinderConfig {
             try (Writer writer = Files.newBufferedWriter(temporary)) {
                 GSON.toJson(sanitized, writer);
             }
-            if (Files.isRegularFile(PATH)) {
+            if (primaryValid && Files.isRegularFile(PATH)) {
                 Files.copy(PATH, BACKUP_PATH, StandardCopyOption.REPLACE_EXISTING);
             }
             try {
@@ -89,6 +100,7 @@ public final class StorageFinderConfig {
                 Files.move(temporary, PATH, StandardCopyOption.REPLACE_EXISTING);
             }
             instance = sanitized;
+            primaryValid = true;
             lastModified = Files.getLastModifiedTime(PATH).toMillis();
             return true;
         } catch (Exception exception) {
@@ -114,11 +126,19 @@ public final class StorageFinderConfig {
         copy.highlightEnabled = highlightEnabled;
         copy.routeEnabled = routeEnabled;
         copy.avoidHazards = avoidHazards;
+        copy.routeAllowSwimming = routeAllowSwimming;
         copy.showMessages = showMessages;
+        copy.routeMaxRoutes = routeMaxRoutes;
+        copy.routeNodeBudget = routeNodeBudget;
         copy.searchRadiusChunks = searchRadiusChunks;
         copy.hudAnchor = hudAnchor;
         copy.hudOffsetX = hudOffsetX;
         copy.hudOffsetY = hudOffsetY;
+        copy.hudCompact = hudCompact;
+        copy.hudShowDistance = hudShowDistance;
+        copy.hudShowFreshness = hudShowFreshness;
+        copy.hudMaxVisible = hudMaxVisible;
+        copy.hudOpacityPercent = hudOpacityPercent;
         return copy;
     }
 
@@ -134,6 +154,10 @@ public final class StorageFinderConfig {
         }
         config.hudOffsetX = Math.max(0, Math.min(200, config.hudOffsetX));
         config.hudOffsetY = Math.max(0, Math.min(200, config.hudOffsetY));
+        config.hudMaxVisible = Math.max(1, Math.min(12, config.hudMaxVisible));
+        config.hudOpacityPercent = Math.max(30, Math.min(100, config.hudOpacityPercent));
+        config.routeMaxRoutes = Math.max(1, Math.min(5, config.routeMaxRoutes));
+        config.routeNodeBudget = Math.max(200, Math.min(2_000, config.routeNodeBudget));
         return config;
     }
 
@@ -145,7 +169,10 @@ public final class StorageFinderConfig {
 
     private static StorageFinderConfig loadBackup() {
         if (!Files.isRegularFile(BACKUP_PATH)) {
-            return defaults();
+            StorageFinderConfig recovered = defaults();
+            quarantineCorruptPrimary();
+            save(recovered);
+            return recovered;
         }
         try (Reader reader = Files.newBufferedReader(BACKUP_PATH)) {
             StorageFinderConfig recovered = sanitize(GSON.fromJson(reader, StorageFinderConfig.class));
@@ -156,13 +183,28 @@ public final class StorageFinderConfig {
                             StandardCopyOption.REPLACE_EXISTING);
                 }
                 Files.copy(BACKUP_PATH, PATH, StandardCopyOption.REPLACE_EXISTING);
+                primaryValid = true;
             } catch (Exception exception) {
                 StorageFinderClient.LOGGER.warn("Could not restore primary configuration", exception);
             }
             return recovered;
         } catch (Exception exception) {
             StorageFinderClient.LOGGER.warn("Could not recover configuration from {}", BACKUP_PATH, exception);
-            return defaults();
+            StorageFinderConfig recovered = defaults();
+            quarantineCorruptPrimary();
+            save(recovered);
+            return recovered;
+        }
+    }
+
+    private static void quarantineCorruptPrimary() {
+        try {
+            if (Files.isRegularFile(PATH)) {
+                Files.move(PATH, PATH.resolveSibling("storage_finder.json.corrupt"),
+                        StandardCopyOption.REPLACE_EXISTING);
+            }
+        } catch (Exception exception) {
+            StorageFinderClient.LOGGER.warn("Could not quarantine corrupt configuration", exception);
         }
     }
 

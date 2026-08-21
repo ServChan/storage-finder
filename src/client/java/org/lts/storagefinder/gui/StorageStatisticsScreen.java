@@ -6,6 +6,7 @@ import net.minecraft.client.gui.components.EditBox;
 import net.minecraft.client.gui.screens.Screen;
 import net.minecraft.client.input.KeyEvent;
 import net.minecraft.core.registries.BuiltInRegistries;
+import net.minecraft.core.registries.Registries;
 import net.minecraft.network.chat.Component;
 import net.minecraft.resources.Identifier;
 import net.minecraft.world.item.Item;
@@ -146,7 +147,7 @@ public final class StorageStatisticsScreen extends Screen {
         filter(searchBox == null ? "" : searchBox.getValue());
     }
 
-    private static List<Entry> buildEntries(Map<String, Integer> counts) {
+    private List<Entry> buildEntries(Map<String, Integer> counts) {
         List<Entry> result = new ArrayList<>();
         counts.forEach((key, count) -> {
             if (count <= 0) return;
@@ -155,15 +156,34 @@ public final class StorageStatisticsScreen extends Screen {
             Item item = id == null ? Items.AIR : BuiltInRegistries.ITEM.getValue(id);
             if (item == null || item == Items.AIR) return;
             ItemStack stack = new ItemStack(item);
-            Component label = key.contains("|stored_enchantment=")
-                    ? Component.translatable("storagefinder.statistics.enchanted",
-                            key.substring(key.indexOf('=') + 1))
-                    : stack.getHoverName();
+            Component label = enchantmentLabel(key, stack);
             result.add(new Entry(key, label, stack, count));
         });
         result.sort(Comparator.comparingInt(Entry::count).reversed()
                 .thenComparing(entry -> entry.label().getString(), String.CASE_INSENSITIVE_ORDER));
         return List.copyOf(result);
+    }
+
+    private Component enchantmentLabel(String key, ItemStack fallback) {
+        if (!key.contains("|stored_enchantment=")) {
+            return fallback.getHoverName();
+        }
+        String enchantmentKey = key.substring(key.indexOf('=') + 1);
+        Identifier enchantmentId = Identifier.tryParse(enchantmentKey);
+        if (minecraft != null && minecraft.level != null && enchantmentId != null) {
+            var registry = minecraft.level.registryAccess().lookup(Registries.ENCHANTMENT);
+            if (registry.isPresent()) {
+                Component localized = registry.get().entrySet().stream()
+                        .filter(entry -> entry.getKey().identifier().equals(enchantmentId))
+                        .map(entry -> entry.getValue().description())
+                        .findFirst()
+                        .orElse(null);
+                if (localized != null) {
+                    return Component.translatable("storagefinder.statistics.enchanted", localized);
+                }
+            }
+        }
+        return Component.translatable("storagefinder.statistics.enchanted", enchantmentKey);
     }
 
     private void back() {

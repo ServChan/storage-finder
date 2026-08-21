@@ -5,6 +5,8 @@ import net.minecraft.client.multiplayer.ClientLevel;
 import net.minecraft.core.BlockPos;
 import net.minecraft.core.Direction;
 import net.minecraft.tags.BlockTags;
+import net.minecraft.tags.FluidTags;
+import net.minecraft.world.entity.Pose;
 import net.minecraft.world.level.block.Block;
 import net.minecraft.world.level.block.BarrelBlock;
 import net.minecraft.world.level.block.Blocks;
@@ -26,7 +28,7 @@ import java.util.Set;
 
 public final class RouteFinder {
     private static final int MAX_VISITED = 40_000;
-    private static final int VERTICAL_MARGIN = 8;
+    private static final int VERTICAL_MARGIN = 16;
     private static final double MAX_STEP_UP = 1.001;
     private static final double MAX_DROP_DOWN = 1.251;
     private static final double DIAGONAL_COST = Math.sqrt(2.0);
@@ -103,6 +105,7 @@ public final class RouteFinder {
         private int foundTargets;
         private boolean completeAfterResult;
         private StepStatus status = StepStatus.RUNNING;
+        private FailureReason failureReason;
         private Result result;
 
         private Search(ClientLevel level, BlockPos start, Map<BlockPos, BlockPos> goalOwners,
@@ -131,6 +134,7 @@ public final class RouteFinder {
                 return status;
             }
             if (minecraft.level != level || minecraft.player == null) {
+                failureReason = FailureReason.WORLD_CHANGED;
                 status = StepStatus.FAILED;
                 return status;
             }
@@ -179,6 +183,8 @@ public final class RouteFinder {
                 }
             }
             if (open.isEmpty() || visited >= MAX_VISITED) {
+                failureReason = visited >= MAX_VISITED
+                        ? FailureReason.SEARCH_LIMIT : FailureReason.NO_PATH;
                 status = StepStatus.FAILED;
             }
             return status;
@@ -190,6 +196,10 @@ public final class RouteFinder {
 
         public boolean completeAfterResult() {
             return completeAfterResult;
+        }
+
+        public FailureReason failureReason() {
+            return failureReason;
         }
 
         private void rebuildOpen() {
@@ -208,6 +218,14 @@ public final class RouteFinder {
         FOUND,
         COMPLETE,
         FAILED
+    }
+
+    public enum FailureReason {
+        NO_START,
+        NO_REACHABLE_GOAL,
+        NO_PATH,
+        SEARCH_LIMIT,
+        WORLD_CHANGED
     }
 
     public static boolean isPathValid(Minecraft minecraft, List<BlockPos> path) {
@@ -469,14 +487,22 @@ public final class RouteFinder {
             return false;
         }
 
+        boolean feetFluid = !level.getFluidState(feet).isEmpty();
+        boolean headFluid = !level.getFluidState(feet.above()).isEmpty();
+        boolean onlyWater = (!feetFluid || isWater(level, feet))
+                && (!headFluid || isWater(level, feet.above()));
+        if ((feetFluid || headFluid)
+                && (!onlyWater || !StorageFinderConfig.current().routeAllowSwimming)) {
+            return false;
+        }
         if (StorageFinderConfig.current().avoidHazards
-                && (!level.getFluidState(feet).isEmpty() || !level.getFluidState(feet.above()).isEmpty()
-                || isHazardous(level.getBlockState(feet).getBlock())
+                && (isHazardous(level.getBlockState(feet).getBlock())
                 || isHazardous(level.getBlockState(feet.below()).getBlock()))) {
             return false;
         }
 
-        return level.noCollision(minecraft.player, bodyBox(minecraft, feet, surface));
+        return level.noCollision(minecraft.player,
+                bodyBox(minecraft, feet, surface, isSwimmingCell(minecraft, feet)));
     }
 
     public static double surfaceY(Minecraft minecraft, BlockPos feet) {
@@ -489,6 +515,9 @@ public final class RouteFinder {
             return feet.getY();
         }
         if (isClimbable(level, feet.below())) {
+            return feet.getY();
+        }
+        if (StorageFinderConfig.current().routeAllowSwimming && isWater(level, feet)) {
             return feet.getY();
         }
         double footprintRadius = minecraft.player == null
@@ -535,17 +564,19 @@ public final class RouteFinder {
                 return false;
             }
             double bottom = Math.min(fromSurface, toSurface) + 0.0001;
-            double top = Math.max(fromSurface, toSurface) + minecraft.player.getBbHeight();
-            AABB vertical = bodyBox(minecraft, from, bottom - 0.0001)
+            boolean swimming = isSwimmingCell(minecraft, from) || isSwimmingCell(minecraft, to);
+            double top = Math.max(fromSurface, toSurface) + bodyHeight(minecraft, swimming);
+            AABB vertical = bodyBox(minecraft, from, bottom - 0.0001, swimming)
                     .setMaxY(top);
             return minecraft.level.noCollision(minecraft.player, vertical);
         }
 
         double travelSurface = Math.max(fromSurface, toSurface);
+        boolean swimming = isSwimmingCell(minecraft, from) || isSwimmingCell(minecraft, to);
         boolean diagonal = from.getX() != to.getX() && from.getZ() != to.getZ();
         if (!diagonal) {
-            AABB fromBody = bodyBox(minecraft, from, travelSurface);
-            AABB toBody = bodyBox(minecraft, to, travelSurface);
+            AABB fromBody = bodyBox(minecraft, from, travelSurface, swimming);
+            AABB toBody = bodyBox(minecraft, to, travelSurface, swimming);
             return minecraft.level.noCollision(minecraft.player, fromBody.minmax(toBody));
         }
 
@@ -561,7 +592,7 @@ public final class RouteFinder {
             double centerX = fromX + (toX - fromX) * progress;
             double centerZ = fromZ + (toZ - fromZ) * progress;
             if (!minecraft.level.noCollision(minecraft.player,
-                    bodyBoxAt(minecraft, centerX, centerZ, travelSurface))) {
+                    bodyBoxAt(minecraft, centerX, centerZ, travelSurface, swimming))) {
                 return false;
             }
         }
@@ -569,23 +600,45 @@ public final class RouteFinder {
     }
 
     private static AABB bodyBox(Minecraft minecraft, BlockPos feet, double surface) {
-        return bodyBoxAt(minecraft, feet.getX() + 0.5, feet.getZ() + 0.5, surface);
+        return bodyBox(minecraft, feet, surface, false);
+    }
+
+    private static AABB bodyBox(Minecraft minecraft, BlockPos feet, double surface,
+                                boolean swimming) {
+        return bodyBoxAt(minecraft, feet.getX() + 0.5, feet.getZ() + 0.5,
+                surface, swimming);
     }
 
     private static AABB bodyBoxAt(Minecraft minecraft, double centerX, double centerZ,
-                                  double surface) {
-        double width = minecraft.player.getBbWidth();
-        double height = minecraft.player.getBbHeight();
+                                  double surface, boolean swimming) {
+        double width = swimming
+                ? minecraft.player.getDimensions(Pose.SWIMMING).width()
+                : minecraft.player.getBbWidth();
+        double height = bodyHeight(minecraft, swimming);
         double bottom = surface + 0.0001;
         return new AABB(centerX - width / 2.0, bottom, centerZ - width / 2.0,
                 centerX + width / 2.0, bottom + height, centerZ + width / 2.0);
+    }
+
+    private static double bodyHeight(Minecraft minecraft, boolean swimming) {
+        return swimming
+                ? minecraft.player.getDimensions(Pose.SWIMMING).height()
+                : minecraft.player.getBbHeight();
+    }
+
+    private static boolean isSwimmingCell(Minecraft minecraft, BlockPos feet) {
+        return minecraft.level != null
+                && StorageFinderConfig.current().routeAllowSwimming
+                && (isWater(minecraft.level, feet) || isWater(minecraft.level, feet.above()));
     }
 
     private static boolean canClimbBetween(Minecraft minecraft, BlockPos first, BlockPos second) {
         if (minecraft.level == null || first.getX() != second.getX() || first.getZ() != second.getZ()) {
             return false;
         }
-        return isClimbable(minecraft.level, first) || isClimbable(minecraft.level, second);
+        return isClimbable(minecraft.level, first) || isClimbable(minecraft.level, second)
+                || StorageFinderConfig.current().routeAllowSwimming
+                && (isWater(minecraft.level, first) || isWater(minecraft.level, second));
     }
 
     private static boolean isClimbable(ClientLevel level, BlockPos pos) {
@@ -593,9 +646,17 @@ public final class RouteFinder {
         return state.is(BlockTags.CLIMBABLE) || state.is(Blocks.SCAFFOLDING);
     }
 
+    private static boolean isWater(ClientLevel level, BlockPos pos) {
+        return level.getFluidState(pos).is(FluidTags.WATER);
+    }
+
     private static boolean canReachStorage(Minecraft minecraft, BlockPos feet, double surface,
                                            BlockPos storage, double reach) {
-        Vec3 eye = new Vec3(feet.getX() + 0.5, surface + minecraft.player.getEyeHeight(),
+        boolean swimming = isSwimmingCell(minecraft, feet);
+        double eyeHeight = swimming
+                ? minecraft.player.getEyeHeight(Pose.SWIMMING)
+                : minecraft.player.getEyeHeight();
+        Vec3 eye = new Vec3(feet.getX() + 0.5, surface + eyeHeight,
                 feet.getZ() + 0.5);
         AABB targetBox = new AABB(storage);
         double x = Math.max(targetBox.minX, Math.min(eye.x, targetBox.maxX));

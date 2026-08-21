@@ -18,7 +18,6 @@ import net.minecraft.world.inventory.AbstractContainerMenu;
 import net.minecraft.world.inventory.ChestMenu;
 import net.minecraft.world.inventory.ShulkerBoxMenu;
 import net.minecraft.world.item.ItemStack;
-import net.minecraft.world.Container;
 import net.minecraft.world.level.block.BarrelBlock;
 import net.minecraft.world.level.block.ChestBlock;
 import net.minecraft.world.level.block.ShulkerBoxBlock;
@@ -38,9 +37,11 @@ public final class StorageFinderClient implements ClientModInitializer {
     private static final SearchSelection SELECTION = new SearchSelection();
     private static final StorageIndex INDEX = new StorageIndex();
     private static final StorageLocator LOCATOR = new StorageLocator();
+    private static final long PENDING_STORAGE_TIMEOUT_MILLIS = 5_000L;
 
     private static BlockPos pendingStorage;
     private static long pendingStorageAt;
+    private static ClientLevel pendingStorageLevel;
     private static AbstractContainerMenu activeStorageMenu;
     private static int activeStorageSlots;
     private static BlockPos activeStorage;
@@ -75,8 +76,9 @@ public final class StorageFinderClient implements ClientModInitializer {
         if (config.enabled && config.indexContainers && StorageLocator.isStorage(minecraft, pos)) {
             pendingStorage = pos.immutable();
             pendingStorageAt = System.currentTimeMillis();
+            pendingStorageLevel = minecraft.level;
         } else {
-            pendingStorage = null;
+            clearPendingStorage();
         }
     }
 
@@ -84,7 +86,8 @@ public final class StorageFinderClient implements ClientModInitializer {
         StorageFinderConfig config = StorageFinderConfig.loadIfChanged();
         if (minecraft.level != lastLevel) {
             saveAndClearActiveContainer(minecraft);
-            pendingStorage = null;
+            clearPendingStorage();
+            LOCATOR.clear();
             EconomyPriceBridge.clearCache();
             if (lastLevel != null && minecraft.level == null) {
                 WorldScopeTracker.clear();
@@ -95,9 +98,10 @@ public final class StorageFinderClient implements ClientModInitializer {
         if (config.enabled && config.indexContainers) {
             observeContainer(minecraft);
         } else {
-            pendingStorage = null;
+            clearPendingStorage();
             saveAndClearActiveContainer(minecraft);
         }
+        INDEX.tick();
 
         ticks++;
         if (ticks % 10 == 0) {
@@ -139,8 +143,9 @@ public final class StorageFinderClient implements ClientModInitializer {
     }
 
     private static void observeContainer(Minecraft minecraft) {
-        if (pendingStorage != null && System.currentTimeMillis() - pendingStorageAt > 15_000L) {
-            pendingStorage = null;
+        if (pendingStorage != null && (minecraft.level != pendingStorageLevel
+                || System.currentTimeMillis() - pendingStorageAt > PENDING_STORAGE_TIMEOUT_MILLIS)) {
+            clearPendingStorage();
         }
 
         AbstractContainerMenu openedMenu = null;
@@ -156,7 +161,7 @@ public final class StorageFinderClient implements ClientModInitializer {
 
         if (activeStorageMenu == null && openedMenu != null && pendingStorage != null) {
             BlockPos interactedStorage = pendingStorage;
-            pendingStorage = null;
+            clearPendingStorage();
             int storageSlots = storageSlotCount(minecraft, interactedStorage, openedMenu);
             if (storageSlots > 0) {
                 activeStorageMenu = openedMenu;
@@ -190,9 +195,6 @@ public final class StorageFinderClient implements ClientModInitializer {
         if (block instanceof ShulkerBoxBlock && menu instanceof ShulkerBoxMenu && menu.slots.size() >= 27) {
             return 27;
         }
-        if (minecraft.level.getBlockEntity(storage) instanceof Container container) {
-            return Math.min(container.getContainerSize(), menu.slots.size());
-        }
         return 0;
     }
 
@@ -201,8 +203,9 @@ public final class StorageFinderClient implements ClientModInitializer {
             StorageIndex.UpdateResult result = INDEX.update(
                     activeScope, activeStorage, activeStorageMenu, activeStorageSlots);
             activeContentsChanged |= result.kind() == StorageIndex.UpdateKind.UPDATED;
+            boolean persisted = INDEX.flush();
             if (activeContentsChanged && minecraft.player != null && StorageFinderConfig.current().showMessages) {
-                minecraft.player.sendOverlayMessage(result.persisted()
+                minecraft.player.sendOverlayMessage(persisted
                         ? Component.translatable("storagefinder.index.changed_on_close", result.itemTypes())
                         : Component.translatable("storagefinder.index.save_failed"));
             }
@@ -213,6 +216,13 @@ public final class StorageFinderClient implements ClientModInitializer {
         activeStorage = null;
         activeScope = null;
         activeContentsChanged = false;
+        INDEX.flush();
+    }
+
+    private static void clearPendingStorage() {
+        pendingStorage = null;
+        pendingStorageAt = 0L;
+        pendingStorageLevel = null;
     }
 
     public static void onContainerScreenRemoved(AbstractContainerMenu menu) {
@@ -223,10 +233,9 @@ public final class StorageFinderClient implements ClientModInitializer {
 
     public static void onConfigChanged() {
         Minecraft minecraft = Minecraft.getInstance();
+        LOCATOR.clear();
         if (StorageFinderConfig.current().enabled) {
             LOCATOR.refresh(minecraft, SELECTION, INDEX);
-        } else {
-            LOCATOR.clear();
         }
     }
 
@@ -290,6 +299,49 @@ public final class StorageFinderClient implements ClientModInitializer {
         return java.util.Map.copyOf(totals);
     }
 
+    public static java.util.List<IndexRecordView> indexRecords(boolean allScopes) {
+        Minecraft minecraft = Minecraft.getInstance();
+        String currentScope = minecraft.level == null ? "" : ScopeUtil.current(minecraft);
+        return INDEX.recordViews().stream()
+                .filter(record -> allScopes || currentScope.equals(record.scope()))
+                .map(record -> new IndexRecordView(record, recordPresence(minecraft, currentScope, record)))
+                .sorted(java.util.Comparator.comparingLong(
+                        (IndexRecordView view) -> view.record().updatedAt()).reversed())
+                .toList();
+    }
+
+    public static boolean removeIndexRecord(String key) {
+        boolean removed = INDEX.removeRecord(key);
+        LOCATOR.refresh(Minecraft.getInstance(), SELECTION, INDEX);
+        return removed;
+    }
+
+    public static int clearCurrentScopeIndex() {
+        Minecraft minecraft = Minecraft.getInstance();
+        if (minecraft.level == null) {
+            return 0;
+        }
+        int removed = INDEX.removeScope(ScopeUtil.current(minecraft));
+        LOCATOR.refresh(minecraft, SELECTION, INDEX);
+        return removed;
+    }
+
+    public static java.nio.file.Path exportIndex() {
+        return INDEX.exportSnapshot();
+    }
+
+    private static RecordPresence recordPresence(Minecraft minecraft, String currentScope,
+                                                 StorageIndex.RecordView record) {
+        if (minecraft.level == null || !currentScope.equals(record.scope())) {
+            return RecordPresence.OTHER_SCOPE;
+        }
+        BlockPos pos = record.pos();
+        if (!minecraft.level.hasChunk(pos.getX() >> 4, pos.getZ() >> 4)) {
+            return RecordPresence.UNLOADED;
+        }
+        return StorageLocator.isStorage(minecraft, pos) ? RecordPresence.PRESENT : RecordPresence.MISSING;
+    }
+
     public static java.util.List<SearchSelection.Query> activeQueries() {
         return SELECTION.queries();
     }
@@ -328,5 +380,15 @@ public final class StorageFinderClient implements ClientModInitializer {
             case UNCHANGED -> "storagefinder.index.already_remembered";
         };
         return Component.translatable(key, result.itemTypes());
+    }
+
+    public enum RecordPresence {
+        PRESENT,
+        UNLOADED,
+        MISSING,
+        OTHER_SCOPE
+    }
+
+    public record IndexRecordView(StorageIndex.RecordView record, RecordPresence presence) {
     }
 }

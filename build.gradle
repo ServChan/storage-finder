@@ -1,3 +1,5 @@
+import groovy.json.JsonSlurper
+
 plugins {
     id 'net.fabricmc.fabric-loom' version "${loom_version}"
     id 'maven-publish'
@@ -41,6 +43,8 @@ dependencies {
             transitive = false
         }
     }
+    testImplementation "org.junit.jupiter:junit-jupiter:5.11.4"
+    testRuntimeOnly "org.junit.platform:junit-platform-launcher"
 }
 
 tasks.withType(ProcessResources).configureEach {
@@ -52,6 +56,42 @@ tasks.withType(JavaCompile).configureEach {
     it.options.release = 25
     it.options.encoding = "UTF-8"
     it.options.compilerArgs += ["-Xlint:deprecation"]
+}
+
+tasks.withType(Test).configureEach {
+    useJUnitPlatform()
+}
+
+tasks.withType(Jar).configureEach {
+    from(rootProject.file("LICENSE")) {
+        rename { "LICENSE_storagefinder" }
+    }
+}
+
+tasks.register("verifyProjectMetadata") {
+    group = "verification"
+    description = "Checks localization parity and release metadata consistency."
+    doLast {
+        def slurper = new JsonSlurper()
+        def languageDir = file("src/client/resources/assets/storagefinder/lang")
+        def englishKeys = slurper.parse(file("${languageDir}/en_us.json")).keySet()
+        fileTree(languageDir).matching { include "*.json" }.files.each { languageFile ->
+            def keys = slurper.parse(languageFile).keySet()
+            if (keys != englishKeys) {
+                throw new GradleException("Localization keys differ in ${languageFile.name}")
+            }
+        }
+
+        def readme = file("README.md").getText("UTF-8")
+        if (!readme.contains("version-${modVersion}-")
+                || !readme.contains("storage-finder-${modVersion}.jar")) {
+            throw new GradleException("README release version does not match ${modVersion}")
+        }
+    }
+}
+
+tasks.named("check") {
+    dependsOn tasks.named("verifyProjectMetadata")
 }
 
 java {

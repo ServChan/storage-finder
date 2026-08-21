@@ -11,14 +11,13 @@ import java.util.Map;
 import java.util.Optional;
 
 public final class StorageHudRenderer {
-    private static final int MAX_VISIBLE = 6;
     private static final int NORMAL_PANEL_WIDTH = 238;
+    private static final int COMPACT_PANEL_WIDTH = 190;
     private static final int PRICE_PANEL_WIDTH = 270;
     private static final int NORMAL_ROW_HEIGHT = 21;
     private static final int PRICE_ROW_HEIGHT = 34;
     private static final int FOOTER_HEIGHT = 14;
     private static final int MARGIN = 6;
-    private static final int BACKGROUND = 0xB812161D;
     private static final int TEXT = 0xFFF2F5F8;
     private static final int STATUS = 0xFFB5BEC9;
     private static final int PRICE = 0xFF7FE2A7;
@@ -43,9 +42,10 @@ public final class StorageHudRenderer {
         boolean priceMode = leftAlt && bridgeAvailable;
         boolean footerVisible = bridgeAvailable
                 || leftAlt && EconomyPriceBridge.isEconomyInstalled();
-        int panelWidth = priceMode ? PRICE_PANEL_WIDTH : NORMAL_PANEL_WIDTH;
-        int rowHeight = priceMode ? PRICE_ROW_HEIGHT : NORMAL_ROW_HEIGHT;
-        int visible = Math.min(MAX_VISIBLE, queries.size());
+        int panelWidth = priceMode ? PRICE_PANEL_WIDTH
+                : config.hudCompact ? COMPACT_PANEL_WIDTH : NORMAL_PANEL_WIDTH;
+        int rowHeight = priceMode ? PRICE_ROW_HEIGHT : config.hudCompact ? 19 : NORMAL_ROW_HEIGHT;
+        int visible = Math.min(config.hudMaxVisible, queries.size());
         int extraRows = queries.size() > visible ? 1 : 0;
         int panelHeight = visible * rowHeight + extraRows * 14
                 + (footerVisible ? FOOTER_HEIGHT : 0);
@@ -64,16 +64,18 @@ public final class StorageHudRenderer {
             SearchSelection.Query query = queries.get(index);
             int rowY = y + index * rowHeight;
             StorageLocator.QueryStats queryStats = stats.getOrDefault(
-                    query.color(), new StorageLocator.QueryStats(0, 0, false, 0));
+                    query.color(), new StorageLocator.QueryStats(
+                            0, 0, false, 0, 0, 0, 0, 0, Double.NaN, null));
             Component status = statusComponent(config, queryStats);
+            status = Component.literal(trimToWidth(minecraft, status.getString(), panelWidth - 42));
             int statusWidth = minecraft.font.width(status);
             int nameWidth = Math.max(30, panelWidth - 34 - statusWidth);
             String name = trimToWidth(minecraft, query.displayName().getString(), nameWidth);
 
-            graphics.fill(x, rowY, x + panelWidth, rowY + rowHeight - 1, BACKGROUND);
+            graphics.fill(x, rowY, x + panelWidth, rowY + rowHeight - 1, background(config));
             graphics.fill(x, rowY, x + 3, rowY + rowHeight - 1, query.color());
             graphics.item(query.stack(), x + 6, rowY + 2);
-            int firstLineY = priceMode ? rowY + 4 : rowY + 6;
+            int firstLineY = priceMode ? rowY + 4 : rowY + (config.hudCompact ? 5 : 6);
             graphics.text(minecraft.font, Component.literal(name), x + 27, firstLineY, TEXT, true);
             graphics.text(minecraft.font, status, x + panelWidth - statusWidth - 5,
                     firstLineY, STATUS, true);
@@ -88,7 +90,7 @@ public final class StorageHudRenderer {
         int nextY = y + visible * rowHeight;
         if (queries.size() > visible) {
             int moreY = nextY;
-            graphics.fill(x, moreY, x + panelWidth, moreY + 13, BACKGROUND);
+            graphics.fill(x, moreY, x + panelWidth, moreY + 13, background(config));
             graphics.text(minecraft.font, Component.translatable(
                     "storagefinder.hud.more", queries.size() - visible), x + 6, moreY + 2, STATUS, true);
             nextY += 14;
@@ -99,7 +101,7 @@ public final class StorageHudRenderer {
                     ? "storagefinder.hud.economy_context"
                     : "storagefinder.hud.economy_hint")
                     : Component.translatable("storagefinder.hud.economy_unavailable");
-            graphics.fill(x, nextY, x + panelWidth, nextY + FOOTER_HEIGHT - 1, BACKGROUND);
+            graphics.fill(x, nextY, x + panelWidth, nextY + FOOTER_HEIGHT - 1, background(config));
             String footerText = trimToWidth(minecraft, footer.getString(), panelWidth - 12);
             graphics.text(minecraft.font, Component.literal(footerText),
                     x + 6, nextY + 2, STATUS, true);
@@ -125,16 +127,35 @@ public final class StorageHudRenderer {
         Component amount = stats.itemCount() > 0
                 ? Component.translatable("storagefinder.hud.amount", stats.itemCount(), stats.matches())
                 : Component.translatable("storagefinder.hud.matches", stats.matches());
+        Component status;
         if (!config.routeEnabled) {
-            return amount;
+            status = amount;
+        } else if (stats.searching()) {
+            status = Component.translatable("storagefinder.hud.calculating", amount);
+        } else if (stats.routes() == 0) {
+            status = stats.failureReason() == null
+                    ? Component.translatable("storagefinder.hud.unreachable", amount)
+                    : Component.translatable("storagefinder.hud.unreachable_reason", amount,
+                    Component.translatable("storagefinder.route_failure."
+                            + stats.failureReason().name().toLowerCase(Locale.ROOT)));
+        } else {
+            status = Component.translatable("storagefinder.hud.ready", amount, stats.routes());
         }
-        if (stats.searching()) {
-            return Component.translatable("storagefinder.hud.calculating", amount);
+        if (config.hudShowDistance && Double.isFinite(stats.nearestDistance())) {
+            status = status.copy().append(Component.translatable(
+                    "storagefinder.hud.distance", Math.round(stats.nearestDistance())));
         }
-        if (stats.routes() == 0) {
-            return Component.translatable("storagefinder.hud.unreachable", amount);
+        int old = stats.aging() + stats.stale();
+        if (config.hudShowFreshness && (old > 0 || stats.frameOnly() > 0)) {
+            status = status.copy().append(Component.translatable(
+                    "storagefinder.hud.data_quality", old, stats.frameOnly()));
         }
-        return Component.translatable("storagefinder.hud.ready", amount, stats.routes());
+        return status;
+    }
+
+    private static int background(StorageFinderConfig config) {
+        int alpha = Math.round(config.hudOpacityPercent * 255.0F / 100.0F);
+        return alpha << 24 | 0x0012161D;
     }
 
     private static String decimal(double value) {

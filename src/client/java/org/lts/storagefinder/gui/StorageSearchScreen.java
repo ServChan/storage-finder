@@ -59,7 +59,7 @@ public final class StorageSearchScreen extends Screen {
 
         int buttonY = this.height - 30;
         int gap = 8;
-        int buttonWidth = (fieldWidth - gap * 2) / 3;
+        int buttonWidth = (fieldWidth - gap * 3) / 4;
         addRenderableWidget(Button.builder(Component.translatable("storagefinder.search.clear"), button -> {
             StorageFinderClient.clearSearch();
             closeScreen();
@@ -67,8 +67,11 @@ public final class StorageSearchScreen extends Screen {
         addRenderableWidget(Button.builder(Component.translatable("storagefinder.search.statistics"), button ->
                 this.minecraft.setScreenAndShow(new StorageStatisticsScreen()))
                 .bounds(fieldX + buttonWidth + gap, buttonY, buttonWidth, 20).build());
-        addRenderableWidget(Button.builder(Component.translatable("storagefinder.search.cancel"), button -> closeScreen())
+        addRenderableWidget(Button.builder(Component.translatable("storagefinder.search.index"), button ->
+                this.minecraft.setScreenAndShow(new StorageIndexScreen(this)))
                 .bounds(fieldX + (buttonWidth + gap) * 2, buttonY, buttonWidth, 20).build());
+        addRenderableWidget(Button.builder(Component.translatable("storagefinder.search.cancel"), button -> closeScreen())
+                .bounds(fieldX + (buttonWidth + gap) * 3, buttonY, buttonWidth, 20).build());
 
         catalog = buildCatalog();
         updateSuggestions("");

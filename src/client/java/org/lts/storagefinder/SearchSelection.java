@@ -133,12 +133,17 @@ public final class SearchSelection {
         }
         ItemEnchantments enchantments = stack.getOrDefault(
                 DataComponents.STORED_ENCHANTMENTS, ItemEnchantments.EMPTY);
-        String names = enchantments.keySet().stream()
+        List<String> enchantmentNames = enchantments.keySet().stream()
                 .map(holder -> holder.value().description().getString())
                 .sorted(String.CASE_INSENSITIVE_ORDER)
-                .collect(Collectors.joining(", "));
-        return names.isEmpty() ? stack.getHoverName()
-                : Component.translatable("storagefinder.search.enchanted_book", names);
+                .toList();
+        if (enchantmentNames.isEmpty()) {
+            return stack.getHoverName();
+        }
+        String names = String.join(", ", enchantmentNames);
+        return Component.translatable(enchantmentNames.size() == 1
+                ? "storagefinder.search.enchanted_book"
+                : "storagefinder.search.enchanted_book_any", names);
     }
 
     private int nextColor() {

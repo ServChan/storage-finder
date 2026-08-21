@@ -19,15 +19,17 @@ import java.util.Map;
 import java.util.Set;
 
 public final class StorageLocator {
-    private static final int MAX_ROUTES_PER_COLOR = 3;
     private static final int FAILED_ROUTE_RETRY_REFRESHES = 10;
-    private static final int ROUTE_NODE_BUDGET_PER_TICK = 800;
     private final Map<BlockPos, List<Integer>> matches = new LinkedHashMap<>();
     private final Map<Integer, List<Route>> routesByColor = new LinkedHashMap<>();
     private final Map<Integer, String> routeDiagnostics = new HashMap<>();
     private final Map<Integer, FailedRouteAttempt> failedRouteAttempts = new HashMap<>();
     private final Map<Integer, List<BlockPos>> latestCandidatesByColor = new LinkedHashMap<>();
     private final Map<Integer, Integer> latestItemCountsByColor = new LinkedHashMap<>();
+    private final Map<BlockPos, IndexFreshness> latestFreshnessByStorage = new HashMap<>();
+    private final Map<Integer, Map<BlockPos, IndexFreshness>> latestFreshnessByColor = new HashMap<>();
+    private final Map<Integer, Double> latestNearestDistanceByColor = new LinkedHashMap<>();
+    private final Map<Integer, RouteFinder.FailureReason> routeFailures = new HashMap<>();
     private final Map<Integer, RouteJob> routeJobs = new LinkedHashMap<>();
     private long refreshSerial;
     private int routeJobCursor;
@@ -39,17 +41,26 @@ public final class StorageLocator {
         failedRouteAttempts.clear();
         latestCandidatesByColor.clear();
         latestItemCountsByColor.clear();
+        latestFreshnessByStorage.clear();
+        latestFreshnessByColor.clear();
+        latestNearestDistanceByColor.clear();
+        routeFailures.clear();
         routeJobs.clear();
     }
 
     public void refresh(Minecraft minecraft, SearchSelection selection, StorageIndex index) {
         matches.clear();
+        latestFreshnessByStorage.clear();
+        latestFreshnessByColor.clear();
         refreshSerial++;
         if (minecraft.level == null || minecraft.player == null || selection.isEmpty()) {
             routesByColor.clear();
             routeDiagnostics.clear();
             failedRouteAttempts.clear();
             latestCandidatesByColor.clear();
+            latestItemCountsByColor.clear();
+            latestNearestDistanceByColor.clear();
+            routeFailures.clear();
             routeJobs.clear();
             return;
         }
@@ -57,10 +68,13 @@ public final class StorageLocator {
         StorageFinderConfig config = StorageFinderConfig.current();
 
         Map<BlockPos, Map<String, Integer>> itemsByStorage = new HashMap<>();
-        Map<Integer, List<BlockPos>> candidatesByColor = new LinkedHashMap<>();
-        selection.entries().values().forEach(color -> candidatesByColor.put(color, new ArrayList<>()));
+        Map<BlockPos, Set<String>> rememberedItemsByStorage = new HashMap<>();
+        Map<Integer, LinkedHashSet<BlockPos>> candidateSetsByColor = new LinkedHashMap<>();
+        selection.entries().values().forEach(color ->
+                candidateSetsByColor.computeIfAbsent(color, ignored -> new LinkedHashSet<>()));
         double playerX = minecraft.player.getX();
         double playerZ = minecraft.player.getZ();
+        long now = System.currentTimeMillis();
         double radius = config.radiusBlocks();
         AABB area = new AABB(playerX - radius, minecraft.level.getMinY(), playerZ - radius,
                 playerX + radius, minecraft.level.getMaxY(), playerZ + radius);
@@ -76,6 +90,7 @@ public final class StorageLocator {
             Map<String, Integer> frameItems = itemsByStorage.computeIfAbsent(canonical,
                     ignored -> new LinkedHashMap<>());
             SearchSelection.itemIds(frame.getItem()).forEach(item -> frameItems.putIfAbsent(item, 0));
+            latestFreshnessByStorage.putIfAbsent(canonical, IndexFreshness.FRAME_ONLY);
         }
 
         String scope = ScopeUtil.current(minecraft);
@@ -91,7 +106,11 @@ public final class StorageLocator {
                 Map<String, Integer> remembered = itemsByStorage.computeIfAbsent(pos,
                         ignored -> new LinkedHashMap<>());
                 record.items.forEach(item -> remembered.putIfAbsent(item, 0));
+                rememberedItemsByStorage.computeIfAbsent(pos, ignored -> new LinkedHashSet<>())
+                        .addAll(record.items);
                 record.normalizedCounts().forEach((item, count) -> remembered.merge(item, count, Math::max));
+                latestFreshnessByStorage.put(pos,
+                        IndexFreshness.classify(record.updatedAt, now));
             }
         }
 
@@ -103,11 +122,14 @@ public final class StorageLocator {
                 if (storage.getValue().containsKey(selected.getKey())) {
                     colors.add(selected.getValue());
                     countsInStorage.merge(selected.getValue(), storage.getValue().get(selected.getKey()), Math::max);
-                    List<BlockPos> candidates = candidatesByColor.computeIfAbsent(
-                            selected.getValue(), ignored -> new ArrayList<>());
-                    if (!candidates.contains(storage.getKey())) {
-                        candidates.add(storage.getKey());
-                    }
+                    candidateSetsByColor.computeIfAbsent(selected.getValue(), ignored -> new LinkedHashSet<>())
+                            .add(storage.getKey());
+                    IndexFreshness sourceFreshness = rememberedItemsByStorage
+                            .getOrDefault(storage.getKey(), Set.of()).contains(selected.getKey())
+                            ? latestFreshnessByStorage.getOrDefault(storage.getKey(), IndexFreshness.STALE)
+                            : IndexFreshness.FRAME_ONLY;
+                    latestFreshnessByColor.computeIfAbsent(selected.getValue(), ignored -> new HashMap<>())
+                            .merge(storage.getKey(), sourceFreshness, StorageLocator::preferFresher);
                 }
             }
             countsInStorage.forEach((color, count) -> itemCountsByColor.merge(color, count, Integer::sum));
@@ -122,6 +144,14 @@ public final class StorageLocator {
 
         latestItemCountsByColor.clear();
         latestItemCountsByColor.putAll(itemCountsByColor);
+        Map<Integer, List<BlockPos>> candidatesByColor = new LinkedHashMap<>();
+        candidateSetsByColor.forEach((color, candidates) ->
+                candidatesByColor.put(color, new ArrayList<>(candidates)));
+        latestNearestDistanceByColor.clear();
+        candidatesByColor.forEach((color, candidates) -> candidates.stream()
+                .mapToDouble(pos -> Math.sqrt(pos.distToCenterSqr(
+                        minecraft.player.getX(), minecraft.player.getY(), minecraft.player.getZ())))
+                .min().ifPresent(distance -> latestNearestDistanceByColor.put(color, distance)));
         updateRoutes(minecraft, candidatesByColor);
     }
 
@@ -136,9 +166,25 @@ public final class StorageLocator {
     public Map<Integer, QueryStats> queryStats() {
         Map<Integer, QueryStats> stats = new LinkedHashMap<>();
         for (Map.Entry<Integer, List<BlockPos>> entry : latestCandidatesByColor.entrySet()) {
+            int fresh = 0;
+            int aging = 0;
+            int stale = 0;
+            int frames = 0;
+            for (BlockPos pos : entry.getValue()) {
+                switch (latestFreshnessByColor.getOrDefault(entry.getKey(), Map.of())
+                        .getOrDefault(pos, IndexFreshness.FRAME_ONLY)) {
+                    case FRESH -> fresh++;
+                    case AGING -> aging++;
+                    case STALE -> stale++;
+                    case FRAME_ONLY -> frames++;
+                }
+            }
             stats.put(entry.getKey(), new QueryStats(entry.getValue().size(),
                     routesByColor.getOrDefault(entry.getKey(), List.of()).size(),
-                    routeJobs.containsKey(entry.getKey()), latestItemCountsByColor.getOrDefault(entry.getKey(), 0)));
+                    routeJobs.containsKey(entry.getKey()), latestItemCountsByColor.getOrDefault(entry.getKey(), 0),
+                    fresh, aging, stale, frames,
+                    latestNearestDistanceByColor.getOrDefault(entry.getKey(), Double.NaN),
+                    routeFailures.get(entry.getKey())));
         }
         return Map.copyOf(stats);
     }
@@ -148,8 +194,20 @@ public final class StorageLocator {
             return false;
         }
         var block = minecraft.level.getBlockState(pos).getBlock();
-        return block instanceof ChestBlock || block instanceof BarrelBlock || block instanceof ShulkerBoxBlock
-                || minecraft.level.getBlockEntity(pos) instanceof net.minecraft.world.Container;
+        return block instanceof ChestBlock || block instanceof BarrelBlock || block instanceof ShulkerBoxBlock;
+    }
+
+    private static IndexFreshness preferFresher(IndexFreshness first, IndexFreshness second) {
+        return freshnessRank(first) <= freshnessRank(second) ? first : second;
+    }
+
+    private static int freshnessRank(IndexFreshness freshness) {
+        return switch (freshness) {
+            case FRESH -> 0;
+            case AGING -> 1;
+            case STALE -> 2;
+            case FRAME_ONLY -> 3;
+        };
     }
 
     public static boolean withinSearchRadius(BlockPos center, BlockPos pos) {
@@ -181,16 +239,20 @@ public final class StorageLocator {
             routeDiagnostics.clear();
             failedRouteAttempts.clear();
             routeJobs.clear();
+            routeFailures.clear();
             return;
         }
         routesByColor.keySet().removeIf(color -> !candidatesByColor.containsKey(color));
         routeDiagnostics.keySet().removeIf(color -> !candidatesByColor.containsKey(color));
         failedRouteAttempts.keySet().removeIf(color -> !candidatesByColor.containsKey(color));
         routeJobs.keySet().removeIf(color -> !candidatesByColor.containsKey(color));
+        routeFailures.keySet().removeIf(color -> !candidatesByColor.containsKey(color));
         BlockPos start = RouteFinder.resolveStart(minecraft, minecraft.player.blockPosition());
         if (start == null) {
             routesByColor.clear();
             routeJobs.clear();
+            candidatesByColor.keySet().forEach(color ->
+                    routeFailures.put(color, RouteFinder.FailureReason.NO_START));
             return;
         }
         for (Map.Entry<Integer, List<BlockPos>> entry : candidatesByColor.entrySet()) {
@@ -229,9 +291,11 @@ public final class StorageLocator {
             if (candidates.isEmpty()) {
                 routesByColor.remove(entry.getKey());
                 failedRouteAttempts.remove(entry.getKey());
+                routeFailures.remove(entry.getKey());
                 logRouteState(entry.getKey(), 0, 0);
                 continue;
             }
+            routeFailures.remove(entry.getKey());
             routeJobs.put(entry.getKey(), new RouteJob(start, candidates));
         }
     }
@@ -258,9 +322,10 @@ public final class StorageLocator {
         }
 
         List<Integer> colors = new ArrayList<>(routeJobs.keySet());
-        int jobsToProcess = Math.min(colors.size(), ROUTE_NODE_BUDGET_PER_TICK);
-        int baseBudget = ROUTE_NODE_BUDGET_PER_TICK / jobsToProcess;
-        int extraBudget = ROUTE_NODE_BUDGET_PER_TICK % jobsToProcess;
+        int totalBudget = StorageFinderConfig.current().routeNodeBudget;
+        int jobsToProcess = Math.min(colors.size(), totalBudget);
+        int baseBudget = totalBudget / jobsToProcess;
+        int extraBudget = totalBudget % jobsToProcess;
         int startIndex = Math.floorMod(routeJobCursor, colors.size());
         for (int i = 0; i < jobsToProcess; i++) {
             Integer color = colors.get((startIndex + i) % colors.size());
@@ -270,7 +335,7 @@ public final class StorageLocator {
             }
             if (job.search == null) {
                 job.search = RouteFinder.begin(minecraft, job.start, job.candidates,
-                        MAX_ROUTES_PER_COLOR);
+                        StorageFinderConfig.current().routeMaxRoutes);
                 if (job.search == null) {
                     finishRouteJob(color, job);
                     continue;
@@ -319,9 +384,13 @@ public final class StorageLocator {
             routesByColor.remove(color);
             failedRouteAttempts.put(color, new FailedRouteAttempt(
                     job.start, job.candidates, refreshSerial));
+            routeFailures.put(color, job.search == null || job.search.failureReason() == null
+                    ? RouteFinder.FailureReason.NO_REACHABLE_GOAL
+                    : job.search.failureReason());
         } else {
             routesByColor.put(color, List.copyOf(job.found));
             failedRouteAttempts.remove(color);
+            routeFailures.remove(color);
         }
         logRouteState(color, job.candidates.size(), job.found.size());
     }
@@ -409,7 +478,9 @@ public final class StorageLocator {
                         List<Vec3> renderPoints, long createdAtRefresh) {
     }
 
-    public record QueryStats(int matches, int routes, boolean searching, int itemCount) {
+    public record QueryStats(int matches, int routes, boolean searching, int itemCount,
+                             int fresh, int aging, int stale, int frameOnly,
+                             double nearestDistance, RouteFinder.FailureReason failureReason) {
     }
 
     private static final class RouteJob {
