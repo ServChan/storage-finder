@@ -3,7 +3,7 @@
 [![Minecraft Version](https://img.shields.io/badge/Minecraft-26.1.2%20%7C%2026.2-brightgreen?style=flat-square&logo=minecraft)](README.md)
 [![Platform](https://img.shields.io/badge/Platform-Fabric-blue?style=flat-square&logo=fabric)](README.md)
 [![Java Target](https://img.shields.io/badge/Java-25-orange?style=flat-square&logo=openjdk)](README.md)
-[![Mod Version](https://img.shields.io/badge/Version-1.0.3-purple?style=flat-square)](README.md)
+[![Mod Version](https://img.shields.io/badge/version-1.1.0-purple?style=flat-square)](README.md)
 [![License](https://img.shields.io/badge/License-MIT-yellow?style=flat-square)](LICENSE)
 
 High-performance client-side storage search engine for Minecraft 26.1.2-26.2 with 3D collision-aware A* navigation, container memory, and LTS_Server Economy integration.
@@ -132,7 +132,7 @@ High-performance client-side storage search engine for Minecraft 26.1.2-26.2 wit
 - **Fabric Loader:** 0.19.3+;
 - **Java:** 25;
 - **Required:** Fabric API, Mod Menu (optional).
-- Place `storagefinder-1.0.3.jar` into your `.minecraft/mods` directory.
+- Place `storage-finder-1.1.0.jar` into your `.minecraft/mods` directory.
 
 ### Build
 
@@ -142,7 +142,7 @@ High-performance client-side storage search engine for Minecraft 26.1.2-26.2 wit
 .\gradlew.bat clean build --warning-mode all
 ```
 
-Output JAR: `build/libs/storagefinder-1.0.3.jar`.
+Output JAR: `build/libs/storage-finder-1.1.0.jar`.
 
 ## Credits
 

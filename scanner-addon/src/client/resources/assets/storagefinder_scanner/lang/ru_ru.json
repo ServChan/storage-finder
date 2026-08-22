@@ -1,0 +1,12 @@
+{
+  "key.category.storagefinder_scanner.main": "Storage Finder Scanner",
+  "key.storagefinder_scanner.toggle": "Начать или остановить обновление хранилищ",
+  "storagefinder_scanner.started": "§aСканер: §fнайдено хранилищ: %s",
+  "storagefinder_scanner.none": "§7Сканер: доступных хранилищ поблизости не найдено",
+  "storagefinder_scanner.stopped": "§eСканер остановлен §7(обновлено %s из %s)",
+  "storagefinder_scanner.finished": "§aСканер завершён: §fобновлено %s из %s",
+  "storagefinder_scanner.failed": "§eСканер пропустил недоступных хранилищ: §f%s",
+  "storagefinder_scanner.blocked": "§cСканер не запускается, пока открыто меню",
+  "storagefinder_scanner.moved": "§eСканер остановлен: игрок сдвинулся",
+  "storagefinder_scanner.dimension": "§eСканер остановлен: мир изменился"
+}

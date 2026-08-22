@@ -1,0 +1,12 @@
+{
+  "key.category.storagefinder_scanner.main": "Escáner de Storage Finder",
+  "key.storagefinder_scanner.toggle": "Iniciar o detener actualización de cofres",
+  "storagefinder_scanner.started": "§aEscáner: §f%s almacenamientos encontrados",
+  "storagefinder_scanner.none": "§7Escáner: no hay almacenamientos alcanzables cerca",
+  "storagefinder_scanner.stopped": "§eEscáner detenido §7(%s de %s actualizados)",
+  "storagefinder_scanner.finished": "§aEscáner completado: §f%s de %s actualizados",
+  "storagefinder_scanner.failed": "§eEscáner omitió almacenamientos inalcanzables: §f%s",
+  "storagefinder_scanner.blocked": "§cEl escáner no puede iniciarse con un menú abierto",
+  "storagefinder_scanner.moved": "§eEscáner detenido porque el jugador se movió",
+  "storagefinder_scanner.dimension": "§eEscáner detenido porque cambió la dimensión"
+}
