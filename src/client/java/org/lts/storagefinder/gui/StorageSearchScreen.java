@@ -80,10 +80,15 @@ public final class StorageSearchScreen extends Screen {
 
     @Override
     public void extractRenderState(GuiGraphicsExtractor graphics, int mouseX, int mouseY, float tickDelta) {
-        graphics.fill(0, 0, this.width, this.height, 0xF010141C);
-        graphics.centeredText(this.font, this.title, this.width / 2, 17, 0xFFFFFFFF);
+        // Design System 2.0 — dark container background
+        graphics.fill(0, 0, this.width, this.height, 0xF00D141F);
+
+        // Header bar
+        graphics.fill(0, 0, this.width, 28, 0xFF182638);
+        graphics.fill(0, 27, this.width, 28, 0xFF2E435E);
+        graphics.centeredText(this.font, this.title, this.width / 2, 9, 0xFFFFFFFF);
         graphics.centeredText(this.font, Component.translatable("storagefinder.search.description"),
-                this.width / 2, 31, 0xFF9AA4B2);
+                this.width / 2, 21, 0xFF9AA4B2);
         super.extractRenderState(graphics, mouseX, mouseY, tickDelta);
 
         int listY = fieldY + 23;

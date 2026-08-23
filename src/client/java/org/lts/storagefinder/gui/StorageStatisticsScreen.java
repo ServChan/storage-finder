@@ -77,13 +77,18 @@ public final class StorageStatisticsScreen extends Screen {
 
     @Override
     public void extractRenderState(GuiGraphicsExtractor graphics, int mouseX, int mouseY, float tickDelta) {
-        graphics.fill(0, 0, width, height, 0xF010141C);
-        graphics.centeredText(font, title, width / 2, 14, 0xFFFFFFFF);
+        // Design System 2.0 — dark container background
+        graphics.fill(0, 0, width, height, 0xF00D141F);
+
+        // Header bar
+        graphics.fill(0, 0, width, 28, 0xFF182638);
+        graphics.fill(0, 27, width, 28, 0xFF2E435E);
+        graphics.centeredText(font, title, width / 2, 9, 0xFFFFFFFF);
         Component description = nearby
                 ? Component.translatable("storagefinder.statistics.description",
                         StorageFinderConfig.current().searchRadiusChunks)
                 : Component.translatable("storagefinder.statistics.description_everywhere");
-        graphics.centeredText(font, description, width / 2, 27, 0xFF9AA4B2);
+        graphics.centeredText(font, description, width / 2, 21, 0xFF9AA4B2);
         super.extractRenderState(graphics, mouseX, mouseY, tickDelta);
 
         int start = page * rows;

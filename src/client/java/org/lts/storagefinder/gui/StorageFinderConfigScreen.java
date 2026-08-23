@@ -110,10 +110,16 @@ public final class StorageFinderConfigScreen extends Screen {
 
     @Override
     public void extractRenderState(GuiGraphicsExtractor graphics, int mouseX, int mouseY, float tickDelta) {
-        graphics.fill(0, 0, this.width, this.height, 0xF010141C);
-        graphics.centeredText(this.font, this.title, this.width / 2, 16, 0xFFFFFFFF);
+        // Design System 2.0 — dark container background
+        graphics.fill(0, 0, this.width, this.height, 0xF00D141F);
+
+        // Header bar
+        graphics.fill(0, 0, this.width, 28, 0xFF182638);
+        graphics.fill(0, 27, this.width, 28, 0xFF2E435E);
+        graphics.centeredText(this.font, this.title, this.width / 2, 9, 0xFFFFFFFF);
+
         graphics.centeredText(this.font, Component.translatable("storagefinder.config.hotkey_hint"),
-                this.width / 2, 27, 0xFF88C0D0);
+                this.width / 2, 21, 0xFF8FA7BF);
         super.extractRenderState(graphics, mouseX, mouseY, tickDelta);
     }
 

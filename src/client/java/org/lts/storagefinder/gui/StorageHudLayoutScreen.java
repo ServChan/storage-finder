@@ -31,10 +31,13 @@ public final class StorageHudLayoutScreen extends Screen {
 
     @Override
     public void extractRenderState(GuiGraphicsExtractor graphics, int mouseX, int mouseY, float tickDelta) {
-        graphics.fill(0, 0, width, height, 0xD010141C);
-        graphics.centeredText(font, title, width / 2, 12, 0xFFFFFFFF);
+        // Design System 2.0 — semi-transparent dark overlay (drag layout mode)
+        graphics.fill(0, 0, width, height, 0xD00D141F);
+        graphics.fill(0, 0, width, 24, 0xFF182638);
+        graphics.fill(0, 23, width, 24, 0xFF2E435E);
+        graphics.centeredText(font, title, width / 2, 7, 0xFFFFFFFF);
         graphics.centeredText(font, Component.translatable("storagefinder.hud_layout.description"),
-                width / 2, 25, 0xFF9AA4B2);
+                width / 2, 18, 0xFF9AA4B2);
         super.extractRenderState(graphics, mouseX, mouseY, tickDelta);
 
         int panelWidth = panelWidth();

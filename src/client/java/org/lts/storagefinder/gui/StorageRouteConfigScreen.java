@@ -54,10 +54,16 @@ public final class StorageRouteConfigScreen extends Screen {
 
     @Override
     public void extractRenderState(GuiGraphicsExtractor graphics, int mouseX, int mouseY, float tickDelta) {
-        graphics.fill(0, 0, width, height, 0xF010141C);
-        graphics.centeredText(font, title, width / 2, 16, 0xFFFFFFFF);
+        // Design System 2.0 — dark container background
+        graphics.fill(0, 0, width, height, 0xF00D141F);
+
+        // Header bar
+        graphics.fill(0, 0, width, 28, 0xFF182638);
+        graphics.fill(0, 27, width, 28, 0xFF2E435E);
+        graphics.centeredText(font, title, width / 2, 9, 0xFFFFFFFF);
+
         graphics.centeredText(font, Component.translatable("storagefinder.route_config.description"),
-                width / 2, 31, 0xFF9AA4B2);
+                width / 2, 21, 0xFF9AA4B2);
         graphics.centeredText(font, Component.translatable("storagefinder.route_config.geometry_hint"),
                 width / 2, 146, 0xFF80CBC4);
         graphics.centeredText(font, Component.translatable("storagefinder.route_config.budget_hint"),
@@ -96,7 +102,8 @@ public final class StorageRouteConfigScreen extends Screen {
 
     private static Component toggleLabel(String key, boolean value) {
         return Component.translatable(key, Component.translatable(
-                value ? "storagefinder.config.on" : "storagefinder.config.off"));
+                value ? "storagefinder.config.on" : "storagefinder.config.off")
+                .withStyle(style -> style.withColor(value ? 0xFF55FF55 : 0xFFFF5555)));
     }
 
     private void closeScreen() {
