@@ -96,6 +96,14 @@ public final class StorageFinderConfigScreen extends Screen {
             refreshScreenWidgets();
         }).bounds(left + contentWidth - smallWidth, y, smallWidth, BUTTON_HEIGHT).build());
 
+        y += 26;
+        addRenderableWidget(Button.builder(Component.translatable("storagefinder.config.hud_settings"), button ->
+                this.minecraft.setScreenAndShow(new StorageHudConfigScreen(this, config)))
+                .bounds(left, y, columnWidth, BUTTON_HEIGHT).build());
+        addRenderableWidget(Button.builder(Component.translatable("storagefinder.config.route_settings"), button ->
+                this.minecraft.setScreenAndShow(new StorageRouteConfigScreen(this, config)))
+                .bounds(left + columnWidth + gap, y, columnWidth, BUTTON_HEIGHT).build());
+
         int bottomY = this.height - 30;
         int bottomButtonWidth = (contentWidth - gap * 2) / 3;
         addRenderableWidget(Button.builder(Component.translatable("storagefinder.config.defaults"), button -> {
