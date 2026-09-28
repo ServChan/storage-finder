@@ -1,17 +1,20 @@
 package org.lts.storagefinder.gui;
 
+import com.mojang.blaze3d.platform.InputConstants;
 import net.minecraft.client.gui.GuiGraphicsExtractor;
 import net.minecraft.client.gui.components.Button;
 import net.minecraft.client.gui.screens.Screen;
 import net.minecraft.client.input.KeyEvent;
 import net.minecraft.network.chat.Component;
-import org.lwjgl.glfw.GLFW;
 import org.lts.storagefinder.StorageFinderConfig;
 
 public final class StorageRouteConfigScreen extends Screen {
-    private static final int BUTTON_HEIGHT = 20;
+    private static final int BUDGET_STEP = 200;
     private final Screen parent;
     private final StorageFinderConfig config;
+    private int contentLeft;
+    private int contentWidth;
+    private int hintsY;
 
     public StorageRouteConfigScreen(Screen parent, StorageFinderConfig config) {
         super(Component.translatable("storagefinder.route_config.title"));
@@ -21,59 +24,63 @@ public final class StorageRouteConfigScreen extends Screen {
 
     @Override
     protected void init() {
-        int contentWidth = Math.min(520, width - 40);
-        int left = (width - contentWidth) / 2;
-        int y = 48;
+        contentWidth = Math.min(520, width - 40);
+        contentLeft = (width - contentWidth) / 2;
+        int gap = UiTheme.GAP;
+        int column = (contentWidth - gap) / 2;
+        int y = UiTheme.CONTENT_TOP;
+        StorageFinderConfig defaults = StorageFinderConfig.defaultsCopy();
 
-        addRenderableWidget(Button.builder(toggleLabel("storagefinder.route_config.swimming",
-                config.routeAllowSwimming), button -> {
-            config.routeAllowSwimming = !config.routeAllowSwimming;
-            button.setMessage(toggleLabel("storagefinder.route_config.swimming", config.routeAllowSwimming));
-        }).bounds(left, y, contentWidth, BUTTON_HEIGHT).build());
-        y += 30;
-        addStepper(left, y, contentWidth, Component.translatable(
-                "storagefinder.route_config.routes", config.routeMaxRoutes),
+        addRenderableWidget(UiTheme.toggle(contentLeft, y, column, "storagefinder.route_config.swimming",
+                () -> config.routeAllowSwimming, value -> config.routeAllowSwimming = value));
+        addRenderableWidget(UiTheme.toggle(contentLeft + column + gap, y, column, "storagefinder.route_config.doors",
+                () -> config.routeThroughDoors, value -> config.routeThroughDoors = value));
+        y += 28;
+        UiTheme.stepper(contentLeft, y, contentWidth, Component.translatable(
+                        "storagefinder.route_config.routes", config.routeMaxRoutes),
                 () -> config.routeMaxRoutes = Math.max(1, config.routeMaxRoutes - 1),
-                () -> config.routeMaxRoutes = Math.min(5, config.routeMaxRoutes + 1));
-        y += 30;
-        addStepper(left, y, contentWidth, Component.translatable(
-                "storagefinder.route_config.budget", config.routeNodeBudget),
-                () -> config.routeNodeBudget = Math.max(200, config.routeNodeBudget - 200),
-                () -> config.routeNodeBudget = Math.min(2_000, config.routeNodeBudget + 200));
+                () -> config.routeMaxRoutes = defaults.routeMaxRoutes,
+                () -> config.routeMaxRoutes = Math.min(5, config.routeMaxRoutes + 1),
+                this::rebuildWidgets).forEach(this::addRenderableWidget);
+        y += 24;
+        UiTheme.stepper(contentLeft, y, contentWidth, Component.translatable(
+                        "storagefinder.route_config.budget", config.routeNodeBudget),
+                () -> config.routeNodeBudget = Math.max(200, config.routeNodeBudget - BUDGET_STEP),
+                () -> config.routeNodeBudget = defaults.routeNodeBudget,
+                () -> config.routeNodeBudget = Math.min(2_000, config.routeNodeBudget + BUDGET_STEP),
+                this::rebuildWidgets).forEach(this::addRenderableWidget);
+        hintsY = y + 32;
 
         addRenderableWidget(Button.builder(Component.translatable("storagefinder.route_config.reset"), button -> {
-            config.routeAllowSwimming = true;
-            config.routeMaxRoutes = 3;
-            config.routeNodeBudget = 800;
+            config.routeAllowSwimming = defaults.routeAllowSwimming;
+            config.routeThroughDoors = defaults.routeThroughDoors;
+            config.routeMaxRoutes = defaults.routeMaxRoutes;
+            config.routeNodeBudget = defaults.routeNodeBudget;
             rebuildWidgets();
-        }).bounds(left, height - 30, (contentWidth - 8) / 2, BUTTON_HEIGHT).build());
+        }).bounds(contentLeft, height - 30, (contentWidth - gap) / 2, UiTheme.BUTTON_HEIGHT).build());
         addRenderableWidget(Button.builder(Component.translatable("storagefinder.route_config.back"), button -> closeScreen())
-                .bounds(left + (contentWidth + 8) / 2, height - 30,
-                        (contentWidth - 8) / 2, BUTTON_HEIGHT).build());
+                .bounds(contentLeft + (contentWidth + gap) / 2, height - 30,
+                        (contentWidth - gap) / 2, UiTheme.BUTTON_HEIGHT).build());
     }
 
     @Override
     public void extractRenderState(GuiGraphicsExtractor graphics, int mouseX, int mouseY, float tickDelta) {
-        // Design System 2.0 — dark container background
-        graphics.fill(0, 0, width, height, 0xF00D141F);
-
-        // Header bar
-        graphics.fill(0, 0, width, 28, 0xFF182638);
-        graphics.fill(0, 27, width, 28, 0xFF2E435E);
-        graphics.centeredText(font, title, width / 2, 9, 0xFFFFFFFF);
-
-        graphics.centeredText(font, Component.translatable("storagefinder.route_config.description"),
-                width / 2, 21, 0xFF9AA4B2);
-        graphics.centeredText(font, Component.translatable("storagefinder.route_config.geometry_hint"),
-                width / 2, 146, 0xFF80CBC4);
-        graphics.centeredText(font, Component.translatable("storagefinder.route_config.budget_hint"),
-                width / 2, 160, 0xFF9AA4B2);
+        UiTheme.drawFrame(graphics, font, width, height, title,
+                Component.translatable("storagefinder.route_config.description"));
+        int y = hintsY;
+        for (String key : new String[]{"storagefinder.route_config.geometry_hint",
+                "storagefinder.route_config.movement_hint", "storagefinder.route_config.budget_hint"}) {
+            graphics.textWithWordWrap(font, Component.translatable(key), contentLeft, y, contentWidth, UiTheme.MUTED);
+            y += font.wordWrapHeight(Component.translatable(key), contentWidth) + 4;
+        }
+        graphics.centeredText(font, Component.translatable("storagefinder.config.sub_screen_hint"),
+                width / 2, height - 43, UiTheme.MUTED);
         super.extractRenderState(graphics, mouseX, mouseY, tickDelta);
     }
 
     @Override
     public boolean keyPressed(KeyEvent event) {
-        if (event.key() == GLFW.GLFW_KEY_ESCAPE) {
+        if (event.key() == InputConstants.KEY_ESCAPE) {
             closeScreen();
             return true;
         }
@@ -83,27 +90,6 @@ public final class StorageRouteConfigScreen extends Screen {
     @Override
     public void onClose() {
         closeScreen();
-    }
-
-    private void addStepper(int x, int y, int width, Component label, Runnable decrease, Runnable increase) {
-        int small = 40;
-        int gap = 8;
-        addRenderableWidget(Button.builder(Component.literal("−"), button -> {
-            decrease.run();
-            rebuildWidgets();
-        }).bounds(x, y, small, BUTTON_HEIGHT).build());
-        addRenderableWidget(Button.builder(label, button -> { })
-                .bounds(x + small + gap, y, width - small * 2 - gap * 2, BUTTON_HEIGHT).build());
-        addRenderableWidget(Button.builder(Component.literal("+"), button -> {
-            increase.run();
-            rebuildWidgets();
-        }).bounds(x + width - small, y, small, BUTTON_HEIGHT).build());
-    }
-
-    private static Component toggleLabel(String key, boolean value) {
-        return Component.translatable(key, Component.translatable(
-                value ? "storagefinder.config.on" : "storagefinder.config.off")
-                .withStyle(style -> style.withColor(value ? 0xFF55FF55 : 0xFFFF5555)));
     }
 
     private void closeScreen() {

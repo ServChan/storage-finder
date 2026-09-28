@@ -8,9 +8,6 @@ import net.minecraft.client.gui.components.ChatComponent;
 import net.minecraft.client.gui.components.toasts.ToastManager;
 import net.minecraft.network.chat.Component;
 
-/**
- * Bridges HUD services that moved from Minecraft/Gui to Gui/Hud in 26.2.
- */
 public final class MinecraftUiAccess {
     private static final Access ACCESS = createAccess();
 

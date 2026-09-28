@@ -8,10 +8,9 @@ plugins {
 version = project.mod_version
 group = project.maven_group
 def modVersion = project.version.toString()
-def minecraftVersionKey = project.minecraft_version.toString().replace('.', '_')
-def fabricLifecycleEventsVersion = project.property("fabric_lifecycle_events_version_${minecraftVersionKey}")
-def fabricRenderingVersion = project.property("fabric_rendering_version_${minecraftVersionKey}")
-def fabricKeyMappingApiVersion = project.property("fabric_key_mapping_api_version_${minecraftVersionKey}")
+def fabricLifecycleEventsVersion = project.property("fabric_lifecycle_events_version")
+def fabricRenderingVersion = project.property("fabric_rendering_version")
+def fabricKeyMappingApiVersion = project.property("fabric_key_mapping_api_version")
 def localModMenu = file(project.modmenu_jar)
 
 base { archivesName = project.archives_base_name }
@@ -82,7 +81,7 @@ tasks.register("verifyProjectMetadata") {
             }
         }
 
-        def readme = file("README.md").getText("UTF-8")
+        def readme = file("README.md").getText("UTF-8").toLowerCase(Locale.ROOT)
         if (!readme.contains("version-${modVersion}-")
                 || !readme.contains("storage-finder-${modVersion}.jar")) {
             throw new GradleException("README release version does not match ${modVersion}")

@@ -21,11 +21,13 @@ import net.minecraft.world.item.ItemStack;
 import net.minecraft.world.level.block.BarrelBlock;
 import net.minecraft.world.level.block.ChestBlock;
 import net.minecraft.world.level.block.ShulkerBoxBlock;
+import net.minecraft.world.level.block.state.BlockState;
+import net.minecraft.world.level.block.state.properties.ChestType;
 import org.lts.storagefinder.gui.StorageSearchScreen;
-import org.lwjgl.glfw.GLFW;
 
 import java.util.LinkedHashSet;
 import java.util.Set;
+import java.util.function.Consumer;
 import org.slf4j.Logger;
 import org.slf4j.LoggerFactory;
 
@@ -38,6 +40,8 @@ public final class StorageFinderClient implements ClientModInitializer {
     private static final StorageIndex INDEX = new StorageIndex();
     private static final StorageLocator LOCATOR = new StorageLocator();
     private static final long PENDING_STORAGE_TIMEOUT_MILLIS = 5_000L;
+    private static final int SINGLE_CONTAINER_SLOTS = 27;
+    private static final int DOUBLE_CHEST_SLOTS = 54;
 
     private static BlockPos pendingStorage;
     private static long pendingStorageAt;
@@ -58,11 +62,11 @@ public final class StorageFinderClient implements ClientModInitializer {
         EconomyPriceBridge.initialize();
         searchKey = KeyMappingHelper.registerKeyMapping(new KeyMapping(
                 "key.storagefinder.search",
-                InputConstants.Type.KEYSYM,
-                GLFW.GLFW_KEY_RIGHT_ALT,
+                InputConstants.Type.KEYBOARD,
+                InputConstants.KEY_RALT,
                 KEY_CATEGORY));
         ClientTickEvents.END_CLIENT_TICK.register(StorageFinderClient::onTick);
-        ClientLifecycleEvents.CLIENT_STOPPING.register(StorageFinderClient::saveAndClearActiveContainer);
+        ClientLifecycleEvents.CLIENT_STOPPING.register(StorageFinderClient::onClientStopping);
         LevelRenderEvents.BEFORE_GIZMOS.register(context -> StorageRenderer.render(LOCATOR));
         HudElementRegistry.addLast(
                 Identifier.fromNamespaceAndPath(MOD_ID, "active_searches"),
@@ -102,6 +106,9 @@ public final class StorageFinderClient implements ClientModInitializer {
             saveAndClearActiveContainer(minecraft);
         }
         INDEX.tick();
+        if (INDEX.consumeSaveFailureNotice() && minecraft.player != null) {
+            minecraft.player.sendOverlayMessage(Component.translatable("storagefinder.index.save_failed"));
+        }
 
         ticks++;
         if (ticks % 10 == 0) {
@@ -160,6 +167,9 @@ public final class StorageFinderClient implements ClientModInitializer {
         }
 
         if (activeStorageMenu == null && openedMenu != null && pendingStorage != null) {
+            if (openedMenu.getStateId() == 0) {
+                return;
+            }
             BlockPos interactedStorage = pendingStorage;
             clearPendingStorage();
             int storageSlots = storageSlotCount(minecraft, interactedStorage, openedMenu);
@@ -170,7 +180,7 @@ public final class StorageFinderClient implements ClientModInitializer {
                 activeScope = ScopeUtil.current(minecraft);
                 StorageIndex.UpdateResult result = INDEX.update(
                         activeScope, activeStorage, activeStorageMenu, activeStorageSlots);
-                dismissSearchesForStorage(minecraft, activeStorage);
+                dismissSearchesForStorage(minecraft, activeScope, activeStorage);
                 if (minecraft.player != null && StorageFinderConfig.current().showMessages) {
                     minecraft.player.sendOverlayMessage(indexMessage(result));
                 }
@@ -188,14 +198,30 @@ public final class StorageFinderClient implements ClientModInitializer {
         if (minecraft.level == null) {
             return 0;
         }
-        var block = minecraft.level.getBlockState(storage).getBlock();
-        if ((block instanceof ChestBlock || block instanceof BarrelBlock) && menu instanceof ChestMenu chestMenu) {
-            return chestMenu.getContainer().getContainerSize();
+        BlockState state = minecraft.level.getBlockState(storage);
+        var block = state.getBlock();
+        if (block instanceof ChestBlock && menu instanceof ChestMenu chestMenu) {
+            boolean single = !state.hasProperty(ChestBlock.TYPE)
+                    || state.getValue(ChestBlock.TYPE) == ChestType.SINGLE;
+            int expected = single ? SINGLE_CONTAINER_SLOTS : DOUBLE_CHEST_SLOTS;
+            return chestMenu.getContainer().getContainerSize() == expected ? expected : 0;
         }
-        if (block instanceof ShulkerBoxBlock && menu instanceof ShulkerBoxMenu && menu.slots.size() >= 27) {
-            return 27;
+        if (block instanceof BarrelBlock && menu instanceof ChestMenu chestMenu) {
+            return chestMenu.getContainer().getContainerSize() == SINGLE_CONTAINER_SLOTS
+                    ? SINGLE_CONTAINER_SLOTS : 0;
+        }
+        if (block instanceof ShulkerBoxBlock && menu instanceof ShulkerBoxMenu
+                && menu.slots.size() >= SINGLE_CONTAINER_SLOTS) {
+            return SINGLE_CONTAINER_SLOTS;
         }
         return 0;
+    }
+
+    private static void onClientStopping(Minecraft minecraft) {
+        saveAndClearActiveContainer(minecraft);
+        if (!INDEX.flushBlocking()) {
+            LOGGER.warn("Storage index could not be saved while the client was stopping");
+        }
     }
 
     private static void saveAndClearActiveContainer(Minecraft minecraft) {
@@ -312,7 +338,9 @@ public final class StorageFinderClient implements ClientModInitializer {
 
     public static boolean removeIndexRecord(String key) {
         boolean removed = INDEX.removeRecord(key);
-        LOCATOR.refresh(Minecraft.getInstance(), SELECTION, INDEX);
+        if (removed) {
+            LOCATOR.refresh(Minecraft.getInstance(), SELECTION, INDEX);
+        }
         return removed;
     }
 
@@ -326,8 +354,8 @@ public final class StorageFinderClient implements ClientModInitializer {
         return removed;
     }
 
-    public static java.nio.file.Path exportIndex() {
-        return INDEX.exportSnapshot();
+    public static void exportIndex(Consumer<java.nio.file.Path> onComplete) {
+        INDEX.exportSnapshot(onComplete);
     }
 
     private static RecordPresence recordPresence(Minecraft minecraft, String currentScope,
@@ -359,11 +387,17 @@ public final class StorageFinderClient implements ClientModInitializer {
         }
     }
 
-    private static void dismissSearchesForStorage(Minecraft minecraft, BlockPos storage) {
-        Set<Integer> matchedColors = new LinkedHashSet<>();
-        for (BlockPos physical : StorageIndex.physicalBlocks(minecraft, storage)) {
-            matchedColors.addAll(LOCATOR.matches().getOrDefault(physical, java.util.List.of()));
+    private static void dismissSearchesForStorage(Minecraft minecraft, String scope, BlockPos storage) {
+        Set<String> contents = INDEX.itemsAt(scope, storage);
+        if (contents.isEmpty()) {
+            return;
         }
+        Set<Integer> matchedColors = new LinkedHashSet<>();
+        SELECTION.entries().forEach((itemKey, color) -> {
+            if (contents.contains(itemKey)) {
+                matchedColors.add(color);
+            }
+        });
         int removed = SELECTION.removeColors(matchedColors);
         if (removed > 0 && minecraft.player != null && StorageFinderConfig.current().showMessages) {
             minecraft.player.sendOverlayMessage(Component.translatable("storagefinder.selected.completed", removed));

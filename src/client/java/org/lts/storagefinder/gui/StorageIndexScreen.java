@@ -1,24 +1,25 @@
 package org.lts.storagefinder.gui;
 
+import com.mojang.blaze3d.platform.InputConstants;
 import net.minecraft.client.gui.GuiGraphicsExtractor;
 import net.minecraft.client.gui.components.Button;
 import net.minecraft.client.gui.components.EditBox;
+import net.minecraft.client.gui.components.Tooltip;
 import net.minecraft.client.gui.screens.Screen;
 import net.minecraft.client.input.KeyEvent;
 import net.minecraft.client.input.MouseButtonEvent;
 import net.minecraft.network.chat.Component;
-import org.lwjgl.glfw.GLFW;
 import org.lts.storagefinder.MinecraftUiAccess;
 import org.lts.storagefinder.IndexFreshness;
 import org.lts.storagefinder.StorageFinderClient;
 import org.lts.storagefinder.StorageIndex;
 
-import java.nio.file.Path;
 import java.util.List;
 import java.util.Locale;
 
 public final class StorageIndexScreen extends Screen {
     private static final int ROW_HEIGHT = 24;
+    private static final int LIST_TOP = UiTheme.CONTENT_TOP + 48;
     private final Screen parent;
     private EditBox searchBox;
     private List<StorageFinderClient.IndexRecordView> records = List.of();
@@ -26,13 +27,17 @@ public final class StorageIndexScreen extends Screen {
     private String selectedKey;
     private boolean allScopes;
     private boolean confirmClear;
+    private boolean exporting;
     private int page;
     private int rows;
     private int left;
     private int contentWidth;
     private Button scopeButton;
+    private Button exportButton;
     private Button deleteButton;
     private Button clearButton;
+    private Button previousButton;
+    private Button nextButton;
 
     public StorageIndexScreen(Screen parent) {
         super(Component.translatable("storagefinder.index_manager.title"));
@@ -41,131 +46,136 @@ public final class StorageIndexScreen extends Screen {
 
     @Override
     protected void init() {
+        String previousQuery = searchBox == null ? "" : searchBox.getValue();
         contentWidth = Math.min(560, width - 30);
         left = (width - contentWidth) / 2;
-        rows = Math.max(3, Math.min(10, (height - 150) / ROW_HEIGHT));
+        rows = Math.max(3, Math.min(10, (height - LIST_TOP - 58 - 14) / ROW_HEIGHT));
         int gap = 6;
+        int halfWidth = (contentWidth - gap) / 2;
 
         scopeButton = addRenderableWidget(Button.builder(scopeLabel(), button -> {
             allScopes = !allScopes;
             selectedKey = null;
             confirmClear = false;
             reload();
-            updateButtons();
-        }).bounds(left, 38, (contentWidth - gap) / 2, 20).build());
-        addRenderableWidget(Button.builder(Component.translatable("storagefinder.index_manager.export"), button -> {
-            Path exported = StorageFinderClient.exportIndex();
-            Component message = exported == null
-                    ? Component.translatable("storagefinder.index_manager.export_failed")
-                    : Component.translatable("storagefinder.index_manager.exported", exported.toString());
-            MinecraftUiAccess.addClientSystemMessage(minecraft, message);
-        }).bounds(left + (contentWidth + gap) / 2, 38, (contentWidth - gap) / 2, 20).build());
+        }).bounds(left, UiTheme.CONTENT_TOP, halfWidth, 20).build());
+        exportButton = addRenderableWidget(Button.builder(Component.translatable("storagefinder.index_manager.export"),
+                button -> export()).bounds(left + halfWidth + gap, UiTheme.CONTENT_TOP, halfWidth, 20)
+                .tooltip(Tooltip.create(Component.translatable("storagefinder.index_manager.export.tooltip"))).build());
 
-        searchBox = new EditBox(font, left, 62, contentWidth, 20,
+        searchBox = new EditBox(font, left, UiTheme.CONTENT_TOP + 24, contentWidth, 20,
                 Component.translatable("storagefinder.index_manager.search"));
         searchBox.setHint(Component.translatable("storagefinder.index_manager.search_hint"));
+        searchBox.setValue(previousQuery);
         searchBox.setResponder(this::filter);
         addRenderableWidget(searchBox);
 
         int actionY = height - 54;
-        int actionWidth = (contentWidth - gap) / 2;
         deleteButton = addRenderableWidget(Button.builder(
-                Component.translatable("storagefinder.index_manager.delete"), button -> deleteSelected())
-                .bounds(left, actionY, actionWidth, 20).build());
+                        Component.translatable("storagefinder.index_manager.delete"), button -> deleteSelected())
+                .bounds(left, actionY, halfWidth, 20)
+                .tooltip(Tooltip.create(Component.translatable("storagefinder.index_manager.delete.tooltip"))).build());
         clearButton = addRenderableWidget(Button.builder(clearLabel(), button -> clearCurrentScope())
-                .bounds(left + actionWidth + gap, actionY, actionWidth, 20).build());
+                .bounds(left + halfWidth + gap, actionY, halfWidth, 20).build());
 
         int bottomY = height - 30;
         int navigationWidth = (contentWidth - gap * 2) / 3;
-        addRenderableWidget(Button.builder(Component.translatable("storagefinder.index_manager.previous"), button ->
-                page = Math.max(0, page - 1)).bounds(left, bottomY, navigationWidth, 20).build());
+        previousButton = addRenderableWidget(Button.builder(Component.translatable("storagefinder.index_manager.previous"),
+                button -> changePage(-1)).bounds(left, bottomY, navigationWidth, 20).build());
         addRenderableWidget(Button.builder(Component.translatable("storagefinder.index_manager.back"), button -> closeScreen())
                 .bounds(left + navigationWidth + gap, bottomY, navigationWidth, 20).build());
-        addRenderableWidget(Button.builder(Component.translatable("storagefinder.index_manager.next"), button -> {
-            int pages = Math.max(1, (filtered.size() + rows - 1) / rows);
-            page = Math.min(pages - 1, page + 1);
-        }).bounds(left + (navigationWidth + gap) * 2, bottomY, navigationWidth, 20).build());
+        nextButton = addRenderableWidget(Button.builder(Component.translatable("storagefinder.index_manager.next"),
+                button -> changePage(1)).bounds(left + (navigationWidth + gap) * 2, bottomY, navigationWidth, 20).build());
 
         reload();
         setInitialFocus(searchBox);
-        updateButtons();
     }
 
     @Override
     public void extractRenderState(GuiGraphicsExtractor graphics, int mouseX, int mouseY, float tickDelta) {
-        // Design System 2.0 — dark container background
-        graphics.fill(0, 0, width, height, 0xF00D141F);
-
-        // Header bar
-        graphics.fill(0, 0, width, 28, 0xFF182638);
-        graphics.fill(0, 27, width, 28, 0xFF2E435E);
-        graphics.centeredText(font, title, width / 2, 9, 0xFFFFFFFF);
-        graphics.centeredText(font, Component.translatable("storagefinder.index_manager.summary",
-                filtered.size(), records.size()), width / 2, 21, 0xFF9AA4B2);
+        UiTheme.drawFrame(graphics, font, width, height, title, Component.translatable(
+                "storagefinder.index_manager.summary", filtered.size(), records.size()));
         super.extractRenderState(graphics, mouseX, mouseY, tickDelta);
 
+        int hovered = rowAt(mouseX, mouseY);
         int start = page * rows;
         int end = Math.min(filtered.size(), start + rows);
-        int listY = 86;
         long now = System.currentTimeMillis();
         for (int index = start; index < end; index++) {
             StorageFinderClient.IndexRecordView view = filtered.get(index);
             StorageIndex.RecordView record = view.record();
-            int rowY = listY + (index - start) * ROW_HEIGHT;
+            int rowY = LIST_TOP + (index - start) * ROW_HEIGHT;
             boolean selected = record.key().equals(selectedKey);
             graphics.fill(left, rowY, left + contentWidth, rowY + ROW_HEIGHT - 1,
-                    selected ? 0xEE355A7A : (index & 1) == 0 ? 0xEE1B2430 : 0xEE202B38);
+                    selected ? UiTheme.ROW_SELECTED : index == hovered ? UiTheme.ROW_HOVER
+                            : (index & 1) == 0 ? UiTheme.ROW : UiTheme.ROW_ALT);
             if (selected) {
-                graphics.outline(left, rowY, contentWidth, ROW_HEIGHT - 1, 0xFF70C7FF);
+                graphics.outline(left, rowY, contentWidth, ROW_HEIGHT - 1, UiTheme.ACCENT);
             }
+            graphics.fill(left, rowY, left + 3, rowY + ROW_HEIGHT - 1, freshnessColor(record.freshness()));
             String position = record.pos().getX() + ", " + record.pos().getY() + ", " + record.pos().getZ();
-            graphics.text(font, Component.literal(position), left + 6, rowY + 3, 0xFFF2F5F8, true);
+            graphics.text(font, position, left + 8, rowY + 3, UiTheme.BODY, true);
             Component amount = Component.translatable("storagefinder.index_manager.amount",
                     record.itemTypes(), record.itemCount());
             graphics.text(font, amount, left + contentWidth - font.width(amount) - 6,
-                    rowY + 3, 0xFFB5BEC9, true);
+                    rowY + 3, UiTheme.MUTED, true);
 
             Component details = allScopes
                     ? Component.translatable("storagefinder.index_manager.details_scope", record.scope(),
                     freshnessLabel(record.freshness()), presenceLabel(view.presence()), ageLabel(now - record.updatedAt()))
                     : Component.translatable("storagefinder.index_manager.details",
                     freshnessLabel(record.freshness()), presenceLabel(view.presence()), ageLabel(now - record.updatedAt()));
-            String detailText = trimToWidth(details.getString(), contentWidth - 12);
-            graphics.text(font, Component.literal(detailText), left + 6, rowY + 14,
+            graphics.text(font, UiTheme.trim(font, details.getString(), contentWidth - 14), left + 8, rowY + 14,
                     freshnessColor(record.freshness()), false);
         }
         if (filtered.isEmpty()) {
-            graphics.centeredText(font, Component.translatable("storagefinder.index_manager.empty"),
-                    width / 2, listY + 10, 0xFFFFA0A0);
+            Component empty = records.isEmpty()
+                    ? Component.translatable("storagefinder.index_manager.empty")
+                    : Component.translatable("storagefinder.index_manager.no_matches");
+            graphics.textWithWordWrap(font, empty, left, LIST_TOP + 6, contentWidth, UiTheme.MUTED);
+        } else {
+            graphics.centeredText(font, Component.translatable("storagefinder.index_manager.page",
+                    page + 1, pageCount()), width / 2, LIST_TOP + rows * ROW_HEIGHT + 2, UiTheme.MUTED);
         }
     }
 
     @Override
     public boolean mouseClicked(MouseButtonEvent event, boolean doubleClick) {
-        if (event.button() == GLFW.GLFW_MOUSE_BUTTON_LEFT) {
-            int listY = 86;
-            if (event.x() >= left && event.x() < left + contentWidth && event.y() >= listY) {
-                int local = (int) ((event.y() - listY) / ROW_HEIGHT);
-                int index = page * rows + local;
-                if (local >= 0 && local < rows && index < filtered.size()) {
-                    selectedKey = filtered.get(index).record().key();
-                    confirmClear = false;
-                    updateButtons();
-                    return true;
-                }
-            }
+        int index = rowAt(event.x(), event.y());
+        if (index >= 0 && event.button() == InputConstants.MOUSE_BUTTON_LEFT) {
+            selectedKey = filtered.get(index).record().key();
+            confirmClear = false;
+            updateButtons();
+            return true;
         }
         return super.mouseClicked(event, doubleClick);
     }
 
     @Override
+    public boolean mouseScrolled(double mouseX, double mouseY, double scrollX, double scrollY) {
+        if (scrollY != 0.0 && !filtered.isEmpty()) {
+            changePage(scrollY > 0 ? -1 : 1);
+            return true;
+        }
+        return super.mouseScrolled(mouseX, mouseY, scrollX, scrollY);
+    }
+
+    @Override
     public boolean keyPressed(KeyEvent event) {
-        if (event.key() == GLFW.GLFW_KEY_ESCAPE) {
+        if (event.key() == InputConstants.KEY_ESCAPE) {
             closeScreen();
             return true;
         }
-        if (event.key() == GLFW.GLFW_KEY_DELETE && selectedKey != null) {
+        if (event.key() == InputConstants.KEY_DELETE && selectedKey != null) {
             deleteSelected();
+            return true;
+        }
+        if (event.key() == InputConstants.KEY_PAGEDOWN) {
+            changePage(1);
+            return true;
+        }
+        if (event.key() == InputConstants.KEY_PAGEUP) {
+            changePage(-1);
             return true;
         }
         return super.keyPressed(event);
@@ -176,40 +186,78 @@ public final class StorageIndexScreen extends Screen {
         closeScreen();
     }
 
+    private int rowAt(double x, double y) {
+        if (x < left || x >= left + contentWidth || y < LIST_TOP) {
+            return -1;
+        }
+        int local = (int) ((y - LIST_TOP) / ROW_HEIGHT);
+        int index = page * rows + local;
+        return local < rows && index < filtered.size() ? index : -1;
+    }
+
+    private int pageCount() {
+        return Math.max(1, (filtered.size() + rows - 1) / rows);
+    }
+
+    private void changePage(int delta) {
+        page = Math.max(0, Math.min(pageCount() - 1, page + delta));
+        updateButtons();
+    }
+
     private void reload() {
         records = StorageFinderClient.indexRecords(allScopes);
         filter(searchBox == null ? "" : searchBox.getValue());
-        if (selectedKey != null && records.stream().noneMatch(view -> view.record().key().equals(selectedKey))) {
-            selectedKey = null;
-        }
         if (scopeButton != null) {
             scopeButton.setMessage(scopeLabel());
         }
     }
 
     private void filter(String query) {
-        String needle = query.strip().toLowerCase(Locale.ROOT);
+        String needle = normalize(query);
         filtered = records.stream().filter(view -> {
             StorageIndex.RecordView record = view.record();
             String coordinates = record.pos().getX() + " " + record.pos().getY() + " " + record.pos().getZ();
             return needle.isEmpty() || coordinates.contains(needle)
                     || record.scope().toLowerCase(Locale.ROOT).contains(needle);
         }).toList();
+        if (selectedKey != null && filtered.stream().noneMatch(view -> view.record().key().equals(selectedKey))) {
+            selectedKey = null;
+        }
         page = 0;
+        updateButtons();
+    }
+
+    private static String normalize(String query) {
+        return query.toLowerCase(Locale.ROOT).replace(',', ' ').replace(';', ' ')
+                .strip().replaceAll("\\s+", " ");
+    }
+
+    private void export() {
+        if (exporting) {
+            return;
+        }
+        exporting = true;
+        updateButtons();
+        StorageFinderClient.exportIndex(exported -> {
+            exporting = false;
+            updateButtons();
+            MinecraftUiAccess.addClientSystemMessage(minecraft, exported == null
+                    ? Component.translatable("storagefinder.index_manager.export_failed")
+                    : Component.translatable("storagefinder.index_manager.exported", exported.toString()));
+        });
     }
 
     private void deleteSelected() {
         if (selectedKey == null) {
             return;
         }
-        boolean persisted = StorageFinderClient.removeIndexRecord(selectedKey);
-        MinecraftUiAccess.addClientSystemMessage(minecraft, Component.translatable(persisted
-                ? "storagefinder.index_manager.deleted"
-                : "storagefinder.index_manager.delete_failed"));
+        if (StorageFinderClient.removeIndexRecord(selectedKey)) {
+            MinecraftUiAccess.addClientSystemMessage(minecraft,
+                    Component.translatable("storagefinder.index_manager.deleted"));
+        }
         selectedKey = null;
         confirmClear = false;
         reload();
-        updateButtons();
     }
 
     private void clearCurrentScope() {
@@ -222,13 +270,11 @@ public final class StorageIndexScreen extends Screen {
             return;
         }
         int removed = StorageFinderClient.clearCurrentScopeIndex();
-        MinecraftUiAccess.addClientSystemMessage(minecraft, removed >= 0
-                ? Component.translatable("storagefinder.index_manager.cleared", removed)
-                : Component.translatable("storagefinder.index_manager.clear_failed", -removed));
+        MinecraftUiAccess.addClientSystemMessage(minecraft,
+                Component.translatable("storagefinder.index_manager.cleared", removed));
         confirmClear = false;
         selectedKey = null;
         reload();
-        updateButtons();
     }
 
     private void updateButtons() {
@@ -239,6 +285,15 @@ public final class StorageIndexScreen extends Screen {
             clearButton.active = !allScopes && !records.isEmpty();
             clearButton.setMessage(clearLabel());
         }
+        if (exportButton != null) {
+            exportButton.active = !exporting;
+        }
+        if (previousButton != null) {
+            previousButton.active = page > 0;
+        }
+        if (nextButton != null) {
+            nextButton.active = page < pageCount() - 1;
+        }
     }
 
     private Component scopeLabel() {
@@ -248,9 +303,10 @@ public final class StorageIndexScreen extends Screen {
     }
 
     private Component clearLabel() {
-        return Component.translatable(confirmClear
-                ? "storagefinder.index_manager.clear_confirm"
-                : "storagefinder.index_manager.clear_scope");
+        return confirmClear
+                ? Component.translatable("storagefinder.index_manager.clear_confirm")
+                .withStyle(style -> style.withColor(UiTheme.DANGER))
+                : Component.translatable("storagefinder.index_manager.clear_scope");
     }
 
     private static Component freshnessLabel(IndexFreshness freshness) {
@@ -275,23 +331,11 @@ public final class StorageIndexScreen extends Screen {
 
     private static int freshnessColor(IndexFreshness freshness) {
         return switch (freshness) {
-            case FRESH -> 0xFF69F0AE;
-            case AGING -> 0xFFFFD740;
-            case STALE -> 0xFFFF8A80;
-            case FRAME_ONLY -> 0xFF80D8FF;
+            case FRESH -> UiTheme.SUCCESS;
+            case AGING -> UiTheme.WARNING;
+            case STALE -> UiTheme.DANGER;
+            case FRAME_ONLY -> UiTheme.INFO;
         };
-    }
-
-    private String trimToWidth(String text, int maxWidth) {
-        if (font.width(text) <= maxWidth) {
-            return text;
-        }
-        String ellipsis = "…";
-        int end = text.length();
-        while (end > 0 && font.width(text.substring(0, end) + ellipsis) > maxWidth) {
-            end--;
-        }
-        return text.substring(0, end) + ellipsis;
     }
 
     private void closeScreen() {

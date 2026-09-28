@@ -9,7 +9,6 @@ import java.util.List;
 import java.util.Map;
 import java.util.Set;
 
-/** Pure retention logic kept independent from Minecraft so it can be unit tested. */
 public final class IndexRetentionPolicy {
     private IndexRetentionPolicy() {
     }

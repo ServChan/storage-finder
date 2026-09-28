@@ -29,14 +29,9 @@ import net.minecraft.world.level.block.state.properties.ChestType;
 import net.minecraft.world.phys.BlockHitResult;
 import net.minecraft.world.phys.HitResult;
 import net.minecraft.world.phys.Vec3;
-import org.lwjgl.glfw.GLFW;
 import org.slf4j.Logger;
 import org.slf4j.LoggerFactory;
 
-/**
- * Refreshes Storage Finder through the same interactions a player can perform manually.
- * It never reads block-entity inventory data or sends custom inventory packets.
- */
 public final class StorageFinderScannerClient implements ClientModInitializer {
     public static final String MOD_ID = "storagefinder_scanner";
     private static final Logger LOGGER = LoggerFactory.getLogger(MOD_ID);
@@ -62,8 +57,8 @@ public final class StorageFinderScannerClient implements ClientModInitializer {
     public void onInitializeClient() {
         toggleKey = KeyMappingHelper.registerKeyMapping(new KeyMapping(
                 "key.storagefinder_scanner.toggle",
-                InputConstants.Type.KEYSYM,
-                GLFW.GLFW_KEY_F8,
+                InputConstants.Type.KEYBOARD,
+                InputConstants.KEY_F8,
                 KEY_CATEGORY));
         ClientTickEvents.END_CLIENT_TICK.register(StorageFinderScannerClient::onTick);
         LOGGER.info("Storage Finder Scanner initialized");
@@ -254,8 +249,7 @@ public final class StorageFinderScannerClient implements ClientModInitializer {
 
             Screen screen = ScreenAccess.get(minecraft);
             if (phase == Phase.COOLDOWN && screen instanceof AbstractContainerScreen<?>) {
-                // A heavily delayed server response can arrive just after the timeout.
-                // Treat it as the current target instead of interacting with another container.
+
                 phase = Phase.READING;
                 phaseTicks = 0;
                 return;

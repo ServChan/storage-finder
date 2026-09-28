@@ -1,19 +1,20 @@
 package org.lts.storagefinder.gui;
 
+import com.mojang.blaze3d.platform.InputConstants;
 import net.minecraft.client.gui.GuiGraphicsExtractor;
 import net.minecraft.client.gui.components.Button;
+import net.minecraft.client.gui.components.Tooltip;
 import net.minecraft.client.gui.components.toasts.SystemToast;
+import net.minecraft.client.gui.screens.ConfirmScreen;
 import net.minecraft.client.gui.screens.Screen;
 import net.minecraft.client.input.KeyEvent;
 import net.minecraft.network.chat.Component;
-import org.lwjgl.glfw.GLFW;
 import org.lts.storagefinder.StorageFinderClient;
 import org.lts.storagefinder.MinecraftUiAccess;
 import org.lts.storagefinder.StorageFinderConfig;
 
 public final class StorageFinderConfigScreen extends Screen {
     private static final SystemToast.SystemToastId SAVE_TOAST_ID = new SystemToast.SystemToastId();
-    private static final int BUTTON_HEIGHT = 20;
     private final Screen parent;
     private StorageFinderConfig config;
 
@@ -27,153 +28,115 @@ public final class StorageFinderConfigScreen extends Screen {
     protected void init() {
         int contentWidth = Math.min(520, this.width - 40);
         int left = (this.width - contentWidth) / 2;
-        int gap = 8;
+        int gap = UiTheme.GAP;
         int columnWidth = (contentWidth - gap) / 2;
-        int y = 38;
+        int right = left + columnWidth + gap;
+        int y = UiTheme.CONTENT_TOP;
 
-        addToggle(left, y, columnWidth, "storagefinder.config.enabled", () -> config.enabled,
-                value -> config.enabled = value);
-        addToggle(left + columnWidth + gap, y, columnWidth, "storagefinder.config.index_containers",
-                () -> config.indexContainers, value -> config.indexContainers = value);
+        addRenderableWidget(UiTheme.toggle(left, y, columnWidth, "storagefinder.config.enabled",
+                () -> config.enabled, value -> config.enabled = value));
+        addRenderableWidget(UiTheme.toggle(right, y, columnWidth, "storagefinder.config.index_containers",
+                () -> config.indexContainers, value -> config.indexContainers = value));
         y += 24;
-
-        addToggle(left, y, columnWidth, "storagefinder.config.search_frames", () -> config.searchItemFrames,
-                value -> config.searchItemFrames = value);
-        addToggle(left + columnWidth + gap, y, columnWidth, "storagefinder.config.search_memory",
-                () -> config.searchRememberedContents, value -> config.searchRememberedContents = value);
+        addRenderableWidget(UiTheme.toggle(left, y, columnWidth, "storagefinder.config.search_frames",
+                () -> config.searchItemFrames, value -> config.searchItemFrames = value));
+        addRenderableWidget(UiTheme.toggle(right, y, columnWidth, "storagefinder.config.search_memory",
+                () -> config.searchRememberedContents, value -> config.searchRememberedContents = value));
         y += 24;
-
-        addToggle(left, y, columnWidth, "storagefinder.config.highlight", () -> config.highlightEnabled,
-                value -> config.highlightEnabled = value);
-        addToggle(left + columnWidth + gap, y, columnWidth, "storagefinder.config.route", () -> config.routeEnabled,
-                value -> config.routeEnabled = value);
+        addRenderableWidget(UiTheme.toggle(left, y, columnWidth, "storagefinder.config.highlight",
+                () -> config.highlightEnabled, value -> config.highlightEnabled = value));
+        addRenderableWidget(UiTheme.toggle(right, y, columnWidth, "storagefinder.config.route",
+                () -> config.routeEnabled, value -> config.routeEnabled = value));
         y += 24;
+        addRenderableWidget(UiTheme.toggle(left, y, columnWidth, "storagefinder.config.avoid_hazards",
+                () -> config.avoidHazards, value -> config.avoidHazards = value));
+        addRenderableWidget(UiTheme.toggle(right, y, columnWidth, "storagefinder.config.messages",
+                () -> config.showMessages, value -> config.showMessages = value));
+        y += 28;
 
-        addToggle(left, y, columnWidth, "storagefinder.config.avoid_hazards", () -> config.avoidHazards,
-                value -> config.avoidHazards = value);
-        addToggle(left + columnWidth + gap, y, columnWidth, "storagefinder.config.messages", () -> config.showMessages,
-                value -> config.showMessages = value);
-        y += 26;
+        StorageFinderConfig defaults = StorageFinderConfig.defaultsCopy();
+        UiTheme.stepper(left, y, contentWidth, radiusLabel(),
+                () -> config.searchRadiusChunks = Math.max(1, config.searchRadiusChunks - 1),
+                () -> config.searchRadiusChunks = defaults.searchRadiusChunks,
+                () -> config.searchRadiusChunks = Math.min(StorageFinderConfig.MAX_SEARCH_CHUNKS,
+                        config.searchRadiusChunks + 1),
+                this::rebuildWidgets).forEach(this::addRenderableWidget);
+        y += 28;
 
-        int radiusButtonWidth = 40;
-        addRenderableWidget(Button.builder(Component.literal("−"), button -> {
-            config.searchRadiusChunks = Math.max(1, config.searchRadiusChunks - 1);
-            refreshScreenWidgets();
-        }).bounds(left, y, radiusButtonWidth, BUTTON_HEIGHT).build());
-        addRenderableWidget(Button.builder(radiusLabel(), button -> {
-            config.searchRadiusChunks = StorageFinderConfig.MAX_SEARCH_CHUNKS;
-            refreshScreenWidgets();
-        }).bounds(left + radiusButtonWidth + gap, y, contentWidth - radiusButtonWidth * 2 - gap * 2, BUTTON_HEIGHT).build());
-        addRenderableWidget(Button.builder(Component.literal("+"), button -> {
-            config.searchRadiusChunks = Math.min(StorageFinderConfig.MAX_SEARCH_CHUNKS, config.searchRadiusChunks + 1);
-            refreshScreenWidgets();
-        }).bounds(left + contentWidth - radiusButtonWidth, y, radiusButtonWidth, BUTTON_HEIGHT).build());
-
-        y += 26;
-        int anchorWidth = (contentWidth - gap) / 2;
-        addRenderableWidget(Button.builder(hudAnchorLabel(), button -> {
-            config.hudAnchor = switch (config.hudAnchor) {
-                case "TOP_LEFT" -> "TOP_RIGHT";
-                case "TOP_RIGHT" -> "BOTTOM_RIGHT";
-                case "BOTTOM_RIGHT" -> "BOTTOM_LEFT";
-                default -> "TOP_LEFT";
-            };
-            refreshScreenWidgets();
-        }).bounds(left, y, anchorWidth, BUTTON_HEIGHT).build());
-        int offsetLeft = left + anchorWidth + gap;
-        int smallWidth = 34;
-        addRenderableWidget(Button.builder(Component.literal("−"), button -> {
-            config.hudOffsetY = Math.max(0, config.hudOffsetY - 8);
-            refreshScreenWidgets();
-        }).bounds(offsetLeft, y, smallWidth, BUTTON_HEIGHT).build());
-        addRenderableWidget(Button.builder(hudOffsetLabel(), button -> {
-            config.hudOffsetY = 48;
-            refreshScreenWidgets();
-        }).bounds(offsetLeft + smallWidth + gap, y,
-                anchorWidth - smallWidth * 2 - gap * 2, BUTTON_HEIGHT).build());
-        addRenderableWidget(Button.builder(Component.literal("+"), button -> {
-            config.hudOffsetY = Math.min(200, config.hudOffsetY + 8);
-            refreshScreenWidgets();
-        }).bounds(left + contentWidth - smallWidth, y, smallWidth, BUTTON_HEIGHT).build());
-
-        y += 26;
         addRenderableWidget(Button.builder(Component.translatable("storagefinder.config.hud_settings"), button ->
-                this.minecraft.setScreenAndShow(new StorageHudConfigScreen(this, config)))
-                .bounds(left, y, columnWidth, BUTTON_HEIGHT).build());
+                        this.minecraft.setScreenAndShow(new StorageHudConfigScreen(this, config)))
+                .bounds(left, y, columnWidth, UiTheme.BUTTON_HEIGHT).build());
         addRenderableWidget(Button.builder(Component.translatable("storagefinder.config.route_settings"), button ->
-                this.minecraft.setScreenAndShow(new StorageRouteConfigScreen(this, config)))
-                .bounds(left + columnWidth + gap, y, columnWidth, BUTTON_HEIGHT).build());
+                        this.minecraft.setScreenAndShow(new StorageRouteConfigScreen(this, config)))
+                .bounds(right, y, columnWidth, UiTheme.BUTTON_HEIGHT).build());
 
         int bottomY = this.height - 30;
         int bottomButtonWidth = (contentWidth - gap * 2) / 3;
         addRenderableWidget(Button.builder(Component.translatable("storagefinder.config.defaults"), button -> {
             config = StorageFinderConfig.defaultsCopy();
             rebuildWidgets();
-        }).bounds(left, bottomY, bottomButtonWidth, BUTTON_HEIGHT).build());
+        }).bounds(left, bottomY, bottomButtonWidth, UiTheme.BUTTON_HEIGHT)
+                .tooltip(Tooltip.create(Component.translatable("storagefinder.config.defaults.tooltip"))).build());
         addRenderableWidget(Button.builder(Component.translatable("storagefinder.config.save"), button -> saveAndClose())
-                .bounds(left + bottomButtonWidth + gap, bottomY, bottomButtonWidth, BUTTON_HEIGHT).build());
+                .bounds(left + bottomButtonWidth + gap, bottomY, bottomButtonWidth, UiTheme.BUTTON_HEIGHT).build());
         addRenderableWidget(Button.builder(Component.translatable("storagefinder.config.cancel"), button -> closeScreen())
-                .bounds(left + (bottomButtonWidth + gap) * 2, bottomY, bottomButtonWidth, BUTTON_HEIGHT).build());
+                .bounds(left + (bottomButtonWidth + gap) * 2, bottomY, bottomButtonWidth, UiTheme.BUTTON_HEIGHT)
+                .tooltip(Tooltip.create(Component.translatable("storagefinder.config.cancel.tooltip"))).build());
     }
 
     @Override
     public void extractRenderState(GuiGraphicsExtractor graphics, int mouseX, int mouseY, float tickDelta) {
-        // Design System 2.0 — dark container background
-        graphics.fill(0, 0, this.width, this.height, 0xF00D141F);
-
-        // Header bar
-        graphics.fill(0, 0, this.width, 28, 0xFF182638);
-        graphics.fill(0, 27, this.width, 28, 0xFF2E435E);
-        graphics.centeredText(this.font, this.title, this.width / 2, 9, 0xFFFFFFFF);
-
-        graphics.centeredText(this.font, Component.translatable("storagefinder.config.hotkey_hint"),
-                this.width / 2, 21, 0xFF8FA7BF);
+        UiTheme.drawFrame(graphics, this.font, this.width, this.height, this.title,
+                Component.translatable("storagefinder.config.hotkey_hint"));
+        if (hasUnsavedChanges()) {
+            graphics.centeredText(this.font, Component.translatable("storagefinder.config.unsaved"),
+                    this.width / 2, this.height - 43, UiTheme.WARNING);
+        }
         super.extractRenderState(graphics, mouseX, mouseY, tickDelta);
     }
 
     @Override
     public void onClose() {
-        closeScreen();
+        requestClose();
     }
 
     @Override
     public boolean keyPressed(KeyEvent event) {
-        if (event.key() == GLFW.GLFW_KEY_ESCAPE) {
-            closeScreen();
+        if (event.key() == InputConstants.KEY_ESCAPE) {
+            requestClose();
             return true;
         }
-        if (event.key() == GLFW.GLFW_KEY_S && event.hasControlDown()) {
+        if (event.key() == InputConstants.KEY_S && event.hasControlDown()) {
             saveAndClose();
             return true;
         }
         return super.keyPressed(event);
     }
 
-    private void addToggle(int x, int y, int width, String key, BooleanGetter getter, BooleanSetter setter) {
-        addRenderableWidget(Button.builder(toggleLabel(key, getter.get()), button -> {
-            setter.set(!getter.get());
-            button.setMessage(toggleLabel(key, getter.get()));
-        }).bounds(x, y, width, BUTTON_HEIGHT).build());
+    private boolean hasUnsavedChanges() {
+        return !config.sameAs(StorageFinderConfig.current());
+    }
+
+    private void requestClose() {
+        if (!hasUnsavedChanges()) {
+            closeScreen();
+            return;
+        }
+        this.minecraft.setScreenAndShow(new ConfirmScreen(discard -> {
+            if (discard) {
+                closeScreen();
+            } else {
+                this.minecraft.setScreenAndShow(this);
+            }
+        }, Component.translatable("storagefinder.config.unsaved.title"),
+                Component.translatable("storagefinder.config.unsaved.message"),
+                Component.translatable("storagefinder.config.discard"),
+                Component.translatable("storagefinder.config.keep_editing")));
     }
 
     private Component radiusLabel() {
         return Component.translatable("storagefinder.config.radius", config.searchRadiusChunks,
                 config.searchRadiusChunks * 16);
-    }
-
-    private Component hudAnchorLabel() {
-        return Component.translatable("storagefinder.config.hud_anchor",
-                Component.translatable("storagefinder.config.hud_anchor." + config.hudAnchor.toLowerCase()));
-    }
-
-    private Component hudOffsetLabel() {
-        return Component.translatable("storagefinder.config.hud_offset", config.hudOffsetY);
-    }
-
-    private static Component toggleLabel(String key, boolean value) {
-        return Component.translatable(key, Component.translatable(
-                value ? "storagefinder.config.on" : "storagefinder.config.off")
-                .withStyle(style -> style.withColor(value ? 0xFF55FF55 : 0xFFFF5555)));
     }
 
     private void saveAndClose() {
@@ -192,20 +155,5 @@ public final class StorageFinderConfigScreen extends Screen {
 
     private void closeScreen() {
         this.minecraft.setScreenAndShow(parent);
-    }
-
-    private void refreshScreenWidgets() {
-        clearWidgets();
-        init();
-    }
-
-    @FunctionalInterface
-    private interface BooleanGetter {
-        boolean get();
-    }
-
-    @FunctionalInterface
-    private interface BooleanSetter {
-        void set(boolean value);
     }
 }

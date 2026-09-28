@@ -12,10 +12,10 @@
   },
   "depends": {
     "fabricloader": ">=0.19.3",
-    "minecraft": ">=26.1.2 <=26.2",
+    "minecraft": "~26.3",
     "java": ">=25",
     "fabric-key-mapping-api-v1": "*",
     "fabric-lifecycle-events-v1": "*",
-    "storagefinder": ">=1.0.4"
+    "storagefinder": ">=1.2.0"
   }
 }

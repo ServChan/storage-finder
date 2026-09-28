@@ -1,5 +1,6 @@
 package org.lts.storagefinder.gui;
 
+import com.mojang.blaze3d.platform.InputConstants;
 import net.minecraft.client.gui.GuiGraphicsExtractor;
 import net.minecraft.client.gui.components.Button;
 import net.minecraft.client.gui.components.EditBox;
@@ -14,7 +15,6 @@ import net.minecraft.world.item.Item;
 import net.minecraft.world.item.ItemStack;
 import net.minecraft.world.item.Items;
 import net.minecraft.world.item.enchantment.ItemEnchantments;
-import org.lwjgl.glfw.GLFW;
 import org.lts.storagefinder.SearchSelection;
 import org.lts.storagefinder.StorageFinderClient;
 
@@ -23,18 +23,21 @@ import java.util.Comparator;
 import java.util.List;
 import java.util.Locale;
 import java.util.Map;
+import java.util.Set;
 import java.util.stream.Collectors;
 
 public final class StorageSearchScreen extends Screen {
     private static final int ROW_HEIGHT = 22;
-    private static final int MAX_VISIBLE_SUGGESTIONS = 8;
+    private static final int MAX_VISIBLE_ROWS = 12;
+    private static final int LIST_TOP = UiTheme.CONTENT_TOP + 24;
 
     private EditBox searchBox;
     private List<Suggestion> catalog = List.of();
-    private List<Suggestion> visibleSuggestions = List.of();
-    private int selectedSuggestion;
+    private List<Suggestion> matches = List.of();
+    private Map<String, Integer> knownCounts = Map.of();
+    private int selected;
+    private int scroll;
     private int fieldX;
-    private int fieldY;
     private int fieldWidth;
     private int visibleRows;
 
@@ -44,124 +47,149 @@ public final class StorageSearchScreen extends Screen {
 
     @Override
     protected void init() {
+        String previousQuery = searchBox == null ? "" : searchBox.getValue();
         fieldWidth = Math.min(440, this.width - 40);
         fieldX = (this.width - fieldWidth) / 2;
-        fieldY = 48;
-        visibleRows = Math.max(3, Math.min(MAX_VISIBLE_SUGGESTIONS,
-                (this.height - fieldY - 78) / ROW_HEIGHT));
+        int listBottom = this.height - 30 - 18;
+        visibleRows = Math.max(3, Math.min(MAX_VISIBLE_ROWS, (listBottom - LIST_TOP) / ROW_HEIGHT));
 
-        searchBox = new EditBox(this.font, fieldX, fieldY, fieldWidth, 20,
+        searchBox = new EditBox(this.font, fieldX, UiTheme.CONTENT_TOP, fieldWidth, 20,
                 Component.translatable("storagefinder.search.input"));
         searchBox.setMaxLength(128);
         searchBox.setHint(Component.translatable("storagefinder.search.hint"));
+        searchBox.setValue(previousQuery);
         searchBox.setResponder(this::updateSuggestions);
         addRenderableWidget(searchBox);
 
         int buttonY = this.height - 30;
-        int gap = 8;
+        int gap = UiTheme.GAP;
         int buttonWidth = (fieldWidth - gap * 3) / 4;
-        addRenderableWidget(Button.builder(Component.translatable("storagefinder.search.clear"), button -> {
+        Button clear = addRenderableWidget(Button.builder(Component.translatable("storagefinder.search.clear"), button -> {
             StorageFinderClient.clearSearch();
             closeScreen();
         }).bounds(fieldX, buttonY, buttonWidth, 20).build());
+        clear.active = !StorageFinderClient.activeQueries().isEmpty();
         addRenderableWidget(Button.builder(Component.translatable("storagefinder.search.statistics"), button ->
-                this.minecraft.setScreenAndShow(new StorageStatisticsScreen()))
+                        this.minecraft.setScreenAndShow(new StorageStatisticsScreen()))
                 .bounds(fieldX + buttonWidth + gap, buttonY, buttonWidth, 20).build());
         addRenderableWidget(Button.builder(Component.translatable("storagefinder.search.index"), button ->
-                this.minecraft.setScreenAndShow(new StorageIndexScreen(this)))
+                        this.minecraft.setScreenAndShow(new StorageIndexScreen(this)))
                 .bounds(fieldX + (buttonWidth + gap) * 2, buttonY, buttonWidth, 20).build());
         addRenderableWidget(Button.builder(Component.translatable("storagefinder.search.cancel"), button -> closeScreen())
                 .bounds(fieldX + (buttonWidth + gap) * 3, buttonY, buttonWidth, 20).build());
 
+        knownCounts = StorageFinderClient.allKnownItemStatistics();
         catalog = buildCatalog();
-        updateSuggestions("");
+        updateSuggestions(previousQuery);
         setInitialFocus(searchBox);
     }
 
     @Override
     public void extractRenderState(GuiGraphicsExtractor graphics, int mouseX, int mouseY, float tickDelta) {
-        // Design System 2.0 — dark container background
-        graphics.fill(0, 0, this.width, this.height, 0xF00D141F);
-
-        // Header bar
-        graphics.fill(0, 0, this.width, 28, 0xFF182638);
-        graphics.fill(0, 27, this.width, 28, 0xFF2E435E);
-        graphics.centeredText(this.font, this.title, this.width / 2, 9, 0xFFFFFFFF);
-        graphics.centeredText(this.font, Component.translatable("storagefinder.search.description"),
-                this.width / 2, 21, 0xFF9AA4B2);
+        UiTheme.drawFrame(graphics, this.font, this.width, this.height, this.title,
+                Component.translatable("storagefinder.search.description"));
         super.extractRenderState(graphics, mouseX, mouseY, tickDelta);
 
-        int listY = fieldY + 23;
-        for (int index = 0; index < visibleSuggestions.size(); index++) {
-            Suggestion suggestion = visibleSuggestions.get(index);
-            int rowY = listY + index * ROW_HEIGHT;
+        int hovered = rowAt(mouseX, mouseY);
+        int end = Math.min(matches.size(), scroll + visibleRows);
+        for (int index = scroll; index < end; index++) {
+            Suggestion suggestion = matches.get(index);
+            int rowY = LIST_TOP + (index - scroll) * ROW_HEIGHT;
             Integer searchColor = StorageFinderClient.searchColor(suggestion.stack());
-            int background = index == selectedSuggestion ? 0xEE355A7A
-                    : searchColor != null ? 0xEE24382F : 0xEE1B2430;
+            boolean isSelected = index == selected;
+            int background = isSelected ? UiTheme.ROW_SELECTED
+                    : index == hovered ? UiTheme.ROW_HOVER
+                    : searchColor != null ? UiTheme.ROW_ACTIVE : UiTheme.ROW;
             graphics.fill(fieldX, rowY, fieldX + fieldWidth, rowY + ROW_HEIGHT - 1, background);
             graphics.outline(fieldX, rowY, fieldWidth, ROW_HEIGHT - 1,
-                    index == selectedSuggestion ? 0xFF70C7FF
-                            : searchColor != null ? searchColor : 0xFF394554);
-            graphics.item(suggestion.icon(), fieldX + 3, rowY + 2);
+                    isSelected ? UiTheme.ACCENT : searchColor != null ? searchColor : UiTheme.ROW_BORDER);
+            graphics.item(suggestion.stack(), fieldX + 3, rowY + 2);
+
+            int count = suggestion.knownCount();
+            String countText = count > 0 ? Component.translatable("storagefinder.search.known_count", count).getString() : "";
+            int countWidth = countText.isEmpty() ? 0 : this.font.width(countText) + 8;
             Component label = searchColor == null ? suggestion.label()
                     : StorageFinderClient.isPinned(suggestion.stack())
                     ? Component.translatable("storagefinder.search.pinned", suggestion.label())
                     : Component.translatable("storagefinder.search.active", suggestion.label());
-            graphics.text(this.font, label, fieldX + 24, rowY + 7, 0xFFFFFFFF);
+            graphics.text(this.font, UiTheme.trim(this.font, label.getString(), fieldWidth - 30 - countWidth),
+                    fieldX + 24, rowY + 7, UiTheme.TEXT, false);
+            if (!countText.isEmpty()) {
+                graphics.text(this.font, countText, fieldX + fieldWidth - 6 - this.font.width(countText),
+                        rowY + 7, UiTheme.SUCCESS, false);
+            }
         }
-        if (visibleSuggestions.isEmpty() && !searchBox.getValue().isBlank()) {
-            graphics.centeredText(this.font, Component.translatable("storagefinder.search.no_results"),
-                    this.width / 2, listY + 8, 0xFFFFA0A0);
+        UiTheme.drawScrollbar(graphics, fieldX + fieldWidth + 3, LIST_TOP,
+                visibleRows * ROW_HEIGHT - 1, matches.size(), visibleRows, scroll);
+
+        int footerY = LIST_TOP + visibleRows * ROW_HEIGHT + 4;
+        if (matches.isEmpty()) {
+            Component empty = searchBox.getValue().isBlank()
+                    ? Component.translatable("storagefinder.search.empty_catalog")
+                    : Component.translatable("storagefinder.search.no_results", searchBox.getValue().strip());
+            graphics.textWithWordWrap(this.font, empty, fieldX, LIST_TOP + 6, fieldWidth, UiTheme.MUTED);
+        } else {
+            Component footer = Component.translatable("storagefinder.search.footer", matches.size());
+            graphics.centeredText(this.font, UiTheme.trim(this.font, footer.getString(), fieldWidth),
+                    this.width / 2, footerY, UiTheme.MUTED);
         }
     }
 
     @Override
     public boolean mouseClicked(MouseButtonEvent event, boolean doubleClick) {
-        if (event.button() == GLFW.GLFW_MOUSE_BUTTON_LEFT) {
-            int listY = fieldY + 23;
-            if (event.x() >= fieldX && event.x() < fieldX + fieldWidth && event.y() >= listY) {
-                int index = (int) ((event.y() - listY) / ROW_HEIGHT);
-                if (index >= 0 && index < visibleSuggestions.size()) {
-                    choose(visibleSuggestions.get(index));
-                    return true;
-                }
-            }
+        int index = rowAt(event.x(), event.y());
+        if (index >= 0 && event.button() == InputConstants.MOUSE_BUTTON_LEFT) {
+            choose(matches.get(index));
+            return true;
         }
-        if (event.button() == GLFW.GLFW_MOUSE_BUTTON_RIGHT) {
-            int listY = fieldY + 23;
-            if (event.x() >= fieldX && event.x() < fieldX + fieldWidth && event.y() >= listY) {
-                int index = (int) ((event.y() - listY) / ROW_HEIGHT);
-                if (index >= 0 && index < visibleSuggestions.size()) {
-                    Suggestion suggestion = visibleSuggestions.get(index);
-                    if (StorageFinderClient.searchColor(suggestion.stack()) == null) {
-                        StorageFinderClient.selectFromSearch(suggestion.stack(), suggestion.label());
-                    }
-                    StorageFinderClient.togglePinned(suggestion.stack());
-                    return true;
-                }
-            }
+        if (index >= 0 && event.button() == InputConstants.MOUSE_BUTTON_RIGHT) {
+            togglePin(matches.get(index));
+            selected = index;
+            return true;
         }
         return super.mouseClicked(event, doubleClick);
     }
 
     @Override
+    public boolean mouseScrolled(double mouseX, double mouseY, double scrollX, double scrollY) {
+        if (!matches.isEmpty() && scrollY != 0.0) {
+            scrollTo(scroll - (int) Math.signum(scrollY) * 3);
+            return true;
+        }
+        return super.mouseScrolled(mouseX, mouseY, scrollX, scrollY);
+    }
+
+    @Override
     public boolean keyPressed(KeyEvent event) {
-        if (event.key() == GLFW.GLFW_KEY_ESCAPE) {
-            closeScreen();
-            return true;
-        }
-        if (event.key() == GLFW.GLFW_KEY_DOWN && !visibleSuggestions.isEmpty()) {
-            selectedSuggestion = (selectedSuggestion + 1) % visibleSuggestions.size();
-            return true;
-        }
-        if (event.key() == GLFW.GLFW_KEY_UP && !visibleSuggestions.isEmpty()) {
-            selectedSuggestion = (selectedSuggestion - 1 + visibleSuggestions.size()) % visibleSuggestions.size();
-            return true;
-        }
-        if ((event.key() == GLFW.GLFW_KEY_ENTER || event.key() == GLFW.GLFW_KEY_KP_ENTER)
-                && !visibleSuggestions.isEmpty()) {
-            choose(visibleSuggestions.get(selectedSuggestion));
-            return true;
+        switch (event.key()) {
+            case InputConstants.KEY_ESCAPE -> {
+                closeScreen();
+                return true;
+            }
+            case InputConstants.KEY_DOWN -> {
+                return moveSelection(1);
+            }
+            case InputConstants.KEY_UP -> {
+                return moveSelection(-1);
+            }
+            case InputConstants.KEY_PAGEDOWN -> {
+                return moveSelection(visibleRows);
+            }
+            case InputConstants.KEY_PAGEUP -> {
+                return moveSelection(-visibleRows);
+            }
+            case InputConstants.KEY_RETURN, InputConstants.KEY_NUMPADENTER -> {
+                if (!matches.isEmpty()) {
+                    if (event.hasShiftDown()) {
+                        togglePin(matches.get(selected));
+                    } else {
+                        choose(matches.get(selected));
+                    }
+                    return true;
+                }
+            }
+            default -> {
+            }
         }
         return super.keyPressed(event);
     }
@@ -171,6 +199,32 @@ public final class StorageSearchScreen extends Screen {
         closeScreen();
     }
 
+    private int rowAt(double x, double y) {
+        if (x < fieldX || x >= fieldX + fieldWidth || y < LIST_TOP) {
+            return -1;
+        }
+        int local = (int) ((y - LIST_TOP) / ROW_HEIGHT);
+        int index = scroll + local;
+        return local < visibleRows && index < matches.size() ? index : -1;
+    }
+
+    private boolean moveSelection(int delta) {
+        if (matches.isEmpty()) {
+            return false;
+        }
+        selected = Math.max(0, Math.min(matches.size() - 1, selected + delta));
+        if (selected < scroll) {
+            scrollTo(selected);
+        } else if (selected >= scroll + visibleRows) {
+            scrollTo(selected - visibleRows + 1);
+        }
+        return true;
+    }
+
+    private void scrollTo(int value) {
+        scroll = Math.max(0, Math.min(Math.max(0, matches.size() - visibleRows), value));
+    }
+
     private List<Suggestion> buildCatalog() {
         List<Suggestion> suggestions = new ArrayList<>();
         for (Item item : BuiltInRegistries.ITEM) {
@@ -178,8 +232,8 @@ public final class StorageSearchScreen extends Screen {
                 continue;
             }
             ItemStack stack = new ItemStack(item);
-            Component label = stack.getHoverName();
-            suggestions.add(new Suggestion(label, stack));
+            suggestions.add(suggestion(stack.getHoverName(), stack,
+                    BuiltInRegistries.ITEM.getKey(item).toString()));
         }
 
         if (this.minecraft.level != null) {
@@ -191,52 +245,72 @@ public final class StorageSearchScreen extends Screen {
                         ItemEnchantments.Mutable enchantments = new ItemEnchantments.Mutable(ItemEnchantments.EMPTY);
                         enchantments.set(registry.wrapAsHolder(entry.getValue()), 1);
                         stack.set(DataComponents.STORED_ENCHANTMENTS, enchantments.toImmutable());
-                        suggestions.add(new Suggestion(label, stack));
+                        suggestions.add(suggestion(label, stack, entry.getKey().identifier().toString()));
                     }));
         }
 
         Map<String, Long> labelCounts = suggestions.stream().collect(Collectors.groupingBy(
-                suggestion -> suggestion.label().getString(), Collectors.counting()));
-        List<Suggestion> disambiguated = suggestions.stream().map(suggestion -> {
-            if (labelCounts.getOrDefault(suggestion.label().getString(), 0L) <= 1L) {
+                Suggestion::labelText, Collectors.counting()));
+        return suggestions.stream().map(suggestion -> {
+            if (labelCounts.getOrDefault(suggestion.labelText(), 0L) <= 1L) {
                 return suggestion;
             }
-            String identity = String.join(", ", SearchSelection.itemIds(suggestion.stack()));
-            return new Suggestion(Component.translatable("storagefinder.search.duplicate",
-                    suggestion.label(), identity), suggestion.stack());
-        }).collect(Collectors.toCollection(ArrayList::new));
+            Component label = Component.translatable("storagefinder.search.duplicate",
+                    suggestion.label(), suggestion.id());
+            return suggestion(label, suggestion.stack(), suggestion.id());
+        }).toList();
+    }
 
-        disambiguated.sort(Comparator.comparing(suggestion -> suggestion.label().getString(),
-                String.CASE_INSENSITIVE_ORDER));
-        return List.copyOf(disambiguated);
+    private Suggestion suggestion(Component label, ItemStack stack, String id) {
+        Set<String> keys = SearchSelection.itemIds(stack);
+        int known = 0;
+        for (String key : keys) {
+            known = Math.max(known, knownCounts.getOrDefault(key, 0));
+        }
+        String labelText = label.getString();
+        return new Suggestion(label, labelText, labelText.toLowerCase(Locale.ROOT),
+                id.toLowerCase(Locale.ROOT), stack, id, known);
     }
 
     private void updateSuggestions(String query) {
         String needle = query.strip().toLowerCase(Locale.ROOT);
-        visibleSuggestions = catalog.stream()
+        Comparator<Suggestion> order = Comparator
+                .comparingInt((Suggestion suggestion) ->
+                        StorageFinderClient.searchColor(suggestion.stack()) == null ? 1 : 0)
+                .thenComparingInt(suggestion -> matchRank(suggestion, needle))
+                .thenComparingInt(suggestion -> suggestion.knownCount() > 0 ? 0 : 1)
+                .thenComparing(Comparator.comparingInt(Suggestion::knownCount).reversed())
+                .thenComparing(Suggestion::labelText, String.CASE_INSENSITIVE_ORDER);
+        matches = catalog.stream()
                 .filter(suggestion -> needle.isEmpty()
-                        || suggestion.label().getString().toLowerCase(Locale.ROOT).contains(needle))
-                .sorted(Comparator.comparingInt((Suggestion suggestion) ->
-                                StorageFinderClient.searchColor(suggestion.stack()) == null ? 1 : 0)
-                        .thenComparingInt(suggestion -> matchRank(suggestion, needle))
-                        .thenComparing(suggestion -> suggestion.label().getString(), String.CASE_INSENSITIVE_ORDER))
-                .limit(visibleRows)
+                        ? suggestion.knownCount() > 0 || StorageFinderClient.searchColor(suggestion.stack()) != null
+                        : suggestion.lowerLabel().contains(needle) || suggestion.lowerId().contains(needle))
+                .sorted(order)
                 .toList();
-        selectedSuggestion = 0;
+        selected = 0;
+        scroll = 0;
     }
 
     private static int matchRank(Suggestion suggestion, String needle) {
         if (needle.isEmpty()) {
             return 0;
         }
-        String label = suggestion.label().getString().toLowerCase(Locale.ROOT);
-        if (label.equals(needle)) {
+        String label = suggestion.lowerLabel();
+        String path = suggestion.lowerId().substring(suggestion.lowerId().indexOf(':') + 1);
+        if (label.equals(needle) || path.equals(needle) || suggestion.lowerId().equals(needle)) {
             return 0;
         }
-        if (label.startsWith(needle) || label.endsWith(needle)) {
+        if (label.startsWith(needle) || path.startsWith(needle)) {
             return 1;
         }
-        return label.contains(" " + needle) ? 2 : 3;
+        return label.contains(" " + needle) || path.contains("_" + needle) ? 2 : 3;
+    }
+
+    private void togglePin(Suggestion suggestion) {
+        if (StorageFinderClient.searchColor(suggestion.stack()) == null) {
+            StorageFinderClient.selectFromSearch(suggestion.stack(), suggestion.label());
+        }
+        StorageFinderClient.togglePinned(suggestion.stack());
     }
 
     private void choose(Suggestion suggestion) {
@@ -248,9 +322,7 @@ public final class StorageSearchScreen extends Screen {
         this.minecraft.setScreenAndShow(null);
     }
 
-    private record Suggestion(Component label, ItemStack stack) {
-        ItemStack icon() {
-            return stack;
-        }
+    private record Suggestion(Component label, String labelText, String lowerLabel, String lowerId,
+                              ItemStack stack, String id, int knownCount) {
     }
 }

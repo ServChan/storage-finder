@@ -17,11 +17,6 @@ import java.util.Set;
 import java.util.stream.Collectors;
 
 public final class SearchSelection {
-    private static final int[] COLORS = {
-            0xFFFF5252, 0xFF40C4FF, 0xFFFFD740, 0xFF69F0AE,
-            0xFFE040FB, 0xFFFF6E40, 0xFF7C4DFF, 0xFF18FFFF
-    };
-
     private final LinkedHashMap<String, Integer> selected = new LinkedHashMap<>();
     private final LinkedHashMap<Integer, Query> queries = new LinkedHashMap<>();
     private Integer pinnedColor;
@@ -56,10 +51,14 @@ public final class SearchSelection {
     public int removeColors(Collection<Integer> colors) {
         Set<Integer> removable = colors.stream().filter(color -> !color.equals(pinnedColor))
                 .collect(Collectors.toCollection(LinkedHashSet::new));
-        int previousSize = selected.size();
         selected.entrySet().removeIf(entry -> removable.contains(entry.getValue()));
-        removable.forEach(queries::remove);
-        return previousSize - selected.size();
+        int removedQueries = 0;
+        for (Integer color : removable) {
+            if (queries.remove(color) != null) {
+                removedQueries++;
+            }
+        }
+        return removedQueries;
     }
 
     public boolean togglePinned(ItemStack stack) {
@@ -147,14 +146,9 @@ public final class SearchSelection {
     }
 
     private int nextColor() {
-        for (int color : COLORS) {
-            if (!selected.containsValue(color)) {
-                return color;
-            }
-        }
-        int index = selected.size();
-        float hue = (index * 0.61803398875F) % 1.0F;
-        return 0xFF000000 | java.awt.Color.HSBtoRGB(hue, 0.75F, 1.0F) & 0xFFFFFF;
+        Set<Integer> used = new LinkedHashSet<>(queries.keySet());
+        used.addAll(selected.values());
+        return SearchPalette.next(used);
     }
 
     public record Change(boolean added, String itemId, int color) {

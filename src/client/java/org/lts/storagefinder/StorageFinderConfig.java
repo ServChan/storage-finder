@@ -13,6 +13,7 @@ import java.nio.file.StandardCopyOption;
 
 public final class StorageFinderConfig {
     public static final int MAX_SEARCH_CHUNKS = 8;
+    public static final int MAX_HUD_OFFSET = 1_000;
     private static final Gson GSON = new GsonBuilder().setPrettyPrinting().create();
     private static final Path PATH = FabricLoader.getInstance().getConfigDir().resolve("storage_finder.json");
     private static final Path BACKUP_PATH = PATH.resolveSibling("storage_finder.json.bak");
@@ -29,6 +30,7 @@ public final class StorageFinderConfig {
     public boolean routeEnabled = true;
     public boolean avoidHazards = true;
     public boolean routeAllowSwimming = true;
+    public boolean routeThroughDoors = true;
     public boolean showMessages = true;
     public int routeMaxRoutes = 3;
     public int routeNodeBudget = 800;
@@ -117,6 +119,10 @@ public final class StorageFinderConfig {
         return searchRadiusChunks * 16.0;
     }
 
+    public boolean sameAs(StorageFinderConfig other) {
+        return other != null && GSON.toJson(this).equals(GSON.toJson(other));
+    }
+
     private StorageFinderConfig copy() {
         StorageFinderConfig copy = new StorageFinderConfig();
         copy.enabled = enabled;
@@ -127,6 +133,7 @@ public final class StorageFinderConfig {
         copy.routeEnabled = routeEnabled;
         copy.avoidHazards = avoidHazards;
         copy.routeAllowSwimming = routeAllowSwimming;
+        copy.routeThroughDoors = routeThroughDoors;
         copy.showMessages = showMessages;
         copy.routeMaxRoutes = routeMaxRoutes;
         copy.routeNodeBudget = routeNodeBudget;
@@ -147,13 +154,16 @@ public final class StorageFinderConfig {
     }
 
     private static StorageFinderConfig sanitize(StorageFinderConfig config) {
+        if (config == null) {
+            return defaults();
+        }
         config.searchRadiusChunks = Math.max(1, Math.min(MAX_SEARCH_CHUNKS, config.searchRadiusChunks));
         if (!java.util.Set.of("TOP_LEFT", "TOP_RIGHT", "BOTTOM_LEFT", "BOTTOM_RIGHT")
                 .contains(config.hudAnchor)) {
             config.hudAnchor = "BOTTOM_RIGHT";
         }
-        config.hudOffsetX = Math.max(0, Math.min(200, config.hudOffsetX));
-        config.hudOffsetY = Math.max(0, Math.min(200, config.hudOffsetY));
+        config.hudOffsetX = Math.max(0, Math.min(MAX_HUD_OFFSET, config.hudOffsetX));
+        config.hudOffsetY = Math.max(0, Math.min(MAX_HUD_OFFSET, config.hudOffsetY));
         config.hudMaxVisible = Math.max(1, Math.min(12, config.hudMaxVisible));
         config.hudOpacityPercent = Math.max(30, Math.min(100, config.hudOpacityPercent));
         config.routeMaxRoutes = Math.max(1, Math.min(5, config.routeMaxRoutes));

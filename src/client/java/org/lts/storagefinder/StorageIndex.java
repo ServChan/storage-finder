@@ -29,6 +29,10 @@ import java.util.LinkedHashSet;
 import java.util.List;
 import java.util.Map;
 import java.util.Set;
+import java.util.concurrent.CompletableFuture;
+import java.util.concurrent.ExecutorService;
+import java.util.concurrent.Executors;
+import java.util.function.Consumer;
 
 public final class StorageIndex {
     private static final int MAX_RECORDS_PER_SCOPE = 10_000;
@@ -43,18 +47,28 @@ public final class StorageIndex {
     private static final Path EXPORT_DIRECTORY = PATH.resolveSibling("storage_finder_exports");
     private static final DateTimeFormatter EXPORT_TIME = DateTimeFormatter
             .ofPattern("uuuuMMdd-HHmmss-SSS").withZone(ZoneOffset.UTC);
+    private static final ExecutorService IO = Executors.newSingleThreadExecutor(runnable -> {
+        Thread thread = new Thread(runnable, "StorageFinder-IndexIO");
+        thread.setDaemon(true);
+        return thread;
+    });
     private final Map<String, Record> records = new LinkedHashMap<>();
     private final Map<String, List<Record>> recordsByScope = new LinkedHashMap<>();
     private final Map<String, Integer> recordCountsByScope = new LinkedHashMap<>();
-    private boolean dirty;
+    private long revision;
+    private long savedRevision;
     private boolean lastSaveFailed;
+    private boolean saveFailureNotice;
+    private boolean primaryExists;
     private long nextSaveAt;
     private long retryNotBefore;
-    private int recoverySize = -1;
+    private CompletableFuture<SaveOutcome> pendingSave;
+    private volatile int recoverySize = -1;
 
     public void load() {
         recoverySize = recoveryRecordCount();
-        if (!Files.exists(PATH)) {
+        primaryExists = Files.exists(PATH);
+        if (!primaryExists) {
             restoreBestRecoveryIfAvailable();
             return;
         }
@@ -63,13 +77,13 @@ public final class StorageIndex {
             if (records.isEmpty() && restoreBestRecoveryIfAvailable()) {
                 return;
             }
-            dirty = migratedBookKeys;
             if (migratedBookKeys) {
-                if (save(true)) {
+                markDirty(0L);
+                if (saveNow(true)) {
                     StorageFinderClient.LOGGER.info("Migrated legacy enchanted-book search keys");
                 }
             } else {
-                updateRecoverySnapshot();
+                updateRecoverySnapshot(records.size());
             }
         } catch (Exception exception) {
             StorageFinderClient.LOGGER.warn("Could not load storage index {}", PATH, exception);
@@ -95,7 +109,7 @@ public final class StorageIndex {
         UpdateKind kind = previous == null ? UpdateKind.NEW
                 : previous.items.equals(itemIds) && previous.normalizedCounts().equals(itemCounts)
                 ? UpdateKind.UNCHANGED : UpdateKind.UPDATED;
-        if (kind != UpdateKind.UNCHANGED || !Files.exists(PATH)) {
+        if (kind != UpdateKind.UNCHANGED || !primaryExists && !isDirty()) {
             Record record = new Record(scope, pos.getX(), pos.getY(), pos.getZ(), itemIds,
                     itemCounts, System.currentTimeMillis());
             records.put(key, record);
@@ -103,24 +117,48 @@ public final class StorageIndex {
             if (previous == null) {
                 recordCountsByScope.merge(scope, 1, Integer::sum);
             }
-            dirty = true;
-            nextSaveAt = System.currentTimeMillis() + SAVE_DEBOUNCE_MILLIS;
+            markDirty(SAVE_DEBOUNCE_MILLIS);
             pruneIfNeeded();
         }
         return new UpdateResult(kind, itemIds.size(), !lastSaveFailed);
     }
 
-    /** Saves an idle dirty index while avoiding a disk write for every slot update. */
+    public Set<String> itemsAt(String scope, BlockPos pos) {
+        Record record = records.get(key(scope, pos));
+        return record == null ? Set.of() : Set.copyOf(record.items);
+    }
+
     public void tick() {
+        collectFinishedSave();
         long now = System.currentTimeMillis();
-        if (dirty && now >= nextSaveAt && now >= retryNotBefore) {
-            save(true);
+        if (isDirty() && pendingSave == null && now >= nextSaveAt && now >= retryNotBefore) {
+            scheduleSave();
         }
     }
 
-    /** Forces the final snapshot when a menu, world, or client is closing. */
     public boolean flush() {
-        return !dirty || save(true);
+        collectFinishedSave();
+        if (isDirty() && pendingSave == null && System.currentTimeMillis() >= retryNotBefore) {
+            scheduleSave();
+        } else if (isDirty()) {
+            nextSaveAt = 0L;
+        }
+        return !lastSaveFailed;
+    }
+
+    public boolean flushBlocking() {
+        if (pendingSave != null) {
+            pendingSave.join();
+            collectFinishedSave();
+        }
+        return !isDirty() || saveNow(true);
+    }
+
+    public boolean consumeSaveFailureNotice() {
+        collectFinishedSave();
+        boolean notice = saveFailureNotice;
+        saveFailureNotice = false;
+        return notice;
     }
 
     public Collection<Record> recordsInScope(String scope) {
@@ -150,9 +188,9 @@ public final class StorageIndex {
         }
         recordsByScope.remove(removed.scope);
         rebuildScopeCounts();
-        dirty = true;
-        nextSaveAt = 0L;
-        return flush();
+        markDirty(0L);
+        flush();
+        return true;
     }
 
     public int removeScope(String scope) {
@@ -164,25 +202,27 @@ public final class StorageIndex {
         }
         recordsByScope.remove(scope);
         rebuildScopeCounts();
-        dirty = true;
-        nextSaveAt = 0L;
-        return flush() ? removed : -removed;
+        markDirty(0L);
+        flush();
+        return removed;
     }
 
-    public Path exportSnapshot() {
-        if (!flush()) {
-            return null;
-        }
-        try {
-            Files.createDirectories(EXPORT_DIRECTORY);
-            Path target = EXPORT_DIRECTORY.resolve(
-                    "storage_finder_index_" + EXPORT_TIME.format(Instant.now()) + ".json");
-            Files.copy(PATH, target, StandardCopyOption.REPLACE_EXISTING);
-            return target;
-        } catch (Exception exception) {
-            StorageFinderClient.LOGGER.warn("Could not export storage index", exception);
-            return null;
-        }
+    public void exportSnapshot(Consumer<Path> onComplete) {
+        Map<String, Record> snapshot = new LinkedHashMap<>(records);
+        Path target = EXPORT_DIRECTORY.resolve(
+                "storage_finder_index_" + EXPORT_TIME.format(Instant.now()) + ".json");
+        CompletableFuture.supplyAsync(() -> {
+            try {
+                Files.createDirectories(EXPORT_DIRECTORY);
+                try (Writer writer = Files.newBufferedWriter(target)) {
+                    GSON.toJson(snapshot, DATA_TYPE, writer);
+                }
+                return target;
+            } catch (Exception exception) {
+                StorageFinderClient.LOGGER.warn("Could not export storage index", exception);
+                return null;
+            }
+        }, IO).thenAccept(result -> Minecraft.getInstance().execute(() -> onComplete.accept(result)));
     }
 
     public void migrateLegacyScopeIfNearby(String scopedWorld, BlockPos playerPos) {
@@ -191,6 +231,9 @@ public final class StorageIndex {
             return;
         }
         String legacyScope = scopedWorld.substring(0, seedMarker);
+        if (!recordCountsByScope.containsKey(legacyScope)) {
+            return;
+        }
         List<Map.Entry<String, Record>> legacyEntries = new ArrayList<>();
         for (Map.Entry<String, Record> entry : records.entrySet()) {
             Record record = entry.getValue();
@@ -204,23 +247,22 @@ public final class StorageIndex {
         }
 
         for (Map.Entry<String, Record> entry : legacyEntries) {
-            Record record = entry.getValue();
+            Record legacy = entry.getValue();
             records.remove(entry.getKey());
-            record.scope = scopedWorld;
-            String newKey = key(scopedWorld, record.pos());
+            Record migrated = new Record(scopedWorld, legacy.x, legacy.y, legacy.z, legacy.items,
+                    legacy.normalizedCounts(), legacy.updatedAt);
+            String newKey = key(scopedWorld, migrated.pos());
             Record current = records.get(newKey);
-            if (current == null || current.updatedAt < record.updatedAt) {
-                records.put(newKey, record);
+            if (current == null || current.updatedAt < migrated.updatedAt) {
+                records.put(newKey, migrated);
             }
         }
         recordsByScope.remove(legacyScope);
         recordsByScope.remove(scopedWorld);
         rebuildScopeCounts();
-        dirty = true;
-        if (save(true)) {
-            StorageFinderClient.LOGGER.info("Migrated {} nearby legacy storage records to world-scoped index",
-                    legacyEntries.size());
-        }
+        markDirty(0L);
+        StorageFinderClient.LOGGER.info("Migrated {} nearby legacy storage records to world-scoped index",
+                legacyEntries.size());
     }
 
     public static BlockPos canonicalPos(Minecraft minecraft, BlockPos pos) {
@@ -250,12 +292,61 @@ public final class StorageIndex {
         return positions;
     }
 
-    private boolean save(boolean backupCurrent) {
+    private boolean isDirty() {
+        return revision != savedRevision;
+    }
+
+    private void markDirty(long debounceMillis) {
+        revision++;
+        nextSaveAt = debounceMillis <= 0L ? 0L
+                : Math.max(nextSaveAt, System.currentTimeMillis() + debounceMillis);
+    }
+
+    private void scheduleSave() {
+        long snapshotRevision = revision;
+        Map<String, Record> snapshot = new LinkedHashMap<>(records);
+        pendingSave = CompletableFuture.supplyAsync(
+                () -> new SaveOutcome(snapshotRevision, writeSnapshot(snapshot, true)), IO);
+    }
+
+    private void collectFinishedSave() {
+        if (pendingSave == null || !pendingSave.isDone()) {
+            return;
+        }
+        SaveOutcome outcome = pendingSave.join();
+        pendingSave = null;
+        applyOutcome(outcome);
+    }
+
+    private void applyOutcome(SaveOutcome outcome) {
+        if (outcome.success()) {
+            savedRevision = Math.max(savedRevision, outcome.revision());
+            primaryExists = true;
+            lastSaveFailed = false;
+            retryNotBefore = 0L;
+        } else {
+            if (!lastSaveFailed) {
+                saveFailureNotice = true;
+            }
+            lastSaveFailed = true;
+            retryNotBefore = System.currentTimeMillis() + SAVE_RETRY_MILLIS;
+        }
+    }
+
+    private boolean saveNow(boolean backupCurrent) {
+        long snapshotRevision = revision;
+        SaveOutcome outcome = new SaveOutcome(snapshotRevision,
+                writeSnapshot(new LinkedHashMap<>(records), backupCurrent));
+        applyOutcome(outcome);
+        return outcome.success();
+    }
+
+    private boolean writeSnapshot(Map<String, Record> snapshot, boolean backupCurrent) {
         Path temporary = PATH.resolveSibling(PATH.getFileName() + ".tmp");
         try {
             Files.createDirectories(PATH.getParent());
             try (Writer writer = Files.newBufferedWriter(temporary)) {
-                GSON.toJson(records, DATA_TYPE, writer);
+                GSON.toJson(snapshot, DATA_TYPE, writer);
             }
             if (backupCurrent && Files.exists(PATH)) {
                 try {
@@ -269,15 +360,9 @@ public final class StorageIndex {
             } catch (AtomicMoveNotSupportedException ignored) {
                 Files.move(temporary, PATH, StandardCopyOption.REPLACE_EXISTING);
             }
-            dirty = false;
-            lastSaveFailed = false;
-            retryNotBefore = 0L;
-            updateRecoverySnapshot();
+            updateRecoverySnapshot(snapshot.size());
             return true;
         } catch (Exception exception) {
-            dirty = true;
-            lastSaveFailed = true;
-            retryNotBefore = System.currentTimeMillis() + SAVE_RETRY_MILLIS;
             StorageFinderClient.LOGGER.warn("Could not save storage index {}", PATH, exception);
             try {
                 Files.deleteIfExists(temporary);
@@ -349,8 +434,8 @@ public final class StorageIndex {
         records.putAll(bestRecords);
         recordsByScope.clear();
         rebuildScopeCounts();
-        dirty = true;
-        if (!save(false)) {
+        markDirty(0L);
+        if (!saveNow(false)) {
             return false;
         }
         StorageFinderClient.LOGGER.info("Restored {} storage records from {}{}", records.size(), bestSource,
@@ -358,12 +443,12 @@ public final class StorageIndex {
         return true;
     }
 
-    private void updateRecoverySnapshot() {
+    private void updateRecoverySnapshot(int recordCount) {
         try {
-            if (records.size() > recoverySize && Files.exists(PATH)) {
+            if (recordCount > recoverySize && Files.exists(PATH)) {
                 Files.copy(PATH, RECOVERY_PATH, StandardCopyOption.REPLACE_EXISTING);
-                recoverySize = records.size();
-                StorageFinderClient.LOGGER.info("Updated storage recovery snapshot: {} records", records.size());
+                recoverySize = recordCount;
+                StorageFinderClient.LOGGER.info("Updated storage recovery snapshot: {} records", recordCount);
             }
         } catch (Exception exception) {
             StorageFinderClient.LOGGER.warn("Could not update storage recovery snapshot {}", RECOVERY_PATH, exception);
@@ -400,8 +485,7 @@ public final class StorageIndex {
         removals.forEach(records::remove);
         recordsByScope.clear();
         rebuildScopeCounts();
-        dirty = true;
-        nextSaveAt = System.currentTimeMillis() + SAVE_DEBOUNCE_MILLIS;
+        markDirty(SAVE_DEBOUNCE_MILLIS);
         StorageFinderClient.LOGGER.warn("Pruned {} oldest storage records; retained {}",
                 removals.size(), records.size());
         return removals.size();
@@ -445,23 +529,23 @@ public final class StorageIndex {
 
     private static Set<String> expandLegacyItemKey(String itemKey) {
         Set<String> normalized = new LinkedHashSet<>();
-            String marker = "|stored_enchantments=";
-            int markerIndex = itemKey.indexOf(marker);
-            if (markerIndex < 0) {
-                normalized.add(itemKey);
-                return normalized;
-            }
-            String itemId = itemKey.substring(0, markerIndex);
-            String enchantments = itemKey.substring(markerIndex + marker.length());
-            if (enchantments.isEmpty()) {
-                normalized.add(itemId + "|stored_enchantment=");
-            } else {
-                for (String enchantment : enchantments.split(",")) {
-                    if (!enchantment.isBlank()) {
-                        normalized.add(itemId + "|stored_enchantment=" + enchantment);
-                    }
+        String marker = "|stored_enchantments=";
+        int markerIndex = itemKey.indexOf(marker);
+        if (markerIndex < 0) {
+            normalized.add(itemKey);
+            return normalized;
+        }
+        String itemId = itemKey.substring(0, markerIndex);
+        String enchantments = itemKey.substring(markerIndex + marker.length());
+        if (enchantments.isEmpty()) {
+            normalized.add(itemId + "|stored_enchantment=");
+        } else {
+            for (String enchantment : enchantments.split(",")) {
+                if (!enchantment.isBlank()) {
+                    normalized.add(itemId + "|stored_enchantment=" + enchantment);
                 }
             }
+        }
         return normalized;
     }
 
@@ -508,6 +592,9 @@ public final class StorageIndex {
     }
 
     public record UpdateResult(UpdateKind kind, int itemTypes, boolean persisted) {
+    }
+
+    private record SaveOutcome(long revision, boolean success) {
     }
 
     public record RecordView(String key, String scope, BlockPos pos, int itemTypes,

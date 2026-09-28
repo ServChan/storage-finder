@@ -6,7 +6,6 @@ import java.lang.reflect.Method;
 import net.minecraft.client.Minecraft;
 import net.minecraft.client.gui.screens.Screen;
 
-/** Keeps the addon compatible with the screen API move between Minecraft 26.1 and 26.2. */
 final class ScreenAccess {
     private static final Access ACCESS = createAccess();
 

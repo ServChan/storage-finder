@@ -1,10 +1,14 @@
 package org.lts.storagefinder.gui;
 
+import com.mojang.blaze3d.platform.InputConstants;
 import net.minecraft.client.gui.GuiGraphicsExtractor;
 import net.minecraft.client.gui.components.Button;
 import net.minecraft.client.gui.components.EditBox;
 import net.minecraft.client.gui.screens.Screen;
 import net.minecraft.client.input.KeyEvent;
+import net.minecraft.client.input.MouseButtonEvent;
+import net.minecraft.core.Holder;
+import net.minecraft.core.component.DataComponents;
 import net.minecraft.core.registries.BuiltInRegistries;
 import net.minecraft.core.registries.Registries;
 import net.minecraft.network.chat.Component;
@@ -12,19 +16,27 @@ import net.minecraft.resources.Identifier;
 import net.minecraft.world.item.Item;
 import net.minecraft.world.item.ItemStack;
 import net.minecraft.world.item.Items;
-import org.lwjgl.glfw.GLFW;
+import net.minecraft.world.item.enchantment.Enchantment;
+import net.minecraft.world.item.enchantment.ItemEnchantments;
 import org.lts.storagefinder.StorageFinderClient;
 import org.lts.storagefinder.StorageFinderConfig;
 
 import java.util.ArrayList;
 import java.util.Comparator;
+import java.util.HashMap;
 import java.util.List;
 import java.util.Locale;
 import java.util.Map;
 
 public final class StorageStatisticsScreen extends Screen {
     private static final int ROW_HEIGHT = 22;
+    private static final int LIST_TOP = UiTheme.CONTENT_TOP + 48;
+    private static final String ENCHANTMENT_MARKER = "|stored_enchantment=";
     private EditBox searchBox;
+    private Button nearbyButton;
+    private Button everywhereButton;
+    private Button previousButton;
+    private Button nextButton;
     private List<Entry> allEntries = List.of();
     private List<Entry> filteredEntries = List.of();
     private int page;
@@ -39,37 +51,32 @@ public final class StorageStatisticsScreen extends Screen {
 
     @Override
     protected void init() {
+        String previousQuery = searchBox == null ? "" : searchBox.getValue();
         contentWidth = Math.min(440, width - 40);
         left = (width - contentWidth) / 2;
-        rows = Math.max(3, Math.min(10, (height - 135) / ROW_HEIGHT));
-        int gap = 8;
+        rows = Math.max(3, Math.min(12, (height - LIST_TOP - 30 - 18) / ROW_HEIGHT));
+        int gap = UiTheme.GAP;
         int modeWidth = (contentWidth - gap) / 2;
-        addRenderableWidget(Button.builder(Component.translatable("storagefinder.statistics.nearby"), button -> {
-            nearby = true;
-            reloadEntries();
-        }).bounds(left, 43, modeWidth, 20).build());
-        addRenderableWidget(Button.builder(Component.translatable("storagefinder.statistics.everywhere"), button -> {
-            nearby = false;
-            reloadEntries();
-        }).bounds(left + modeWidth + gap, 43, modeWidth, 20).build());
+        nearbyButton = addRenderableWidget(Button.builder(Component.translatable("storagefinder.statistics.nearby"),
+                button -> setNearby(true)).bounds(left, UiTheme.CONTENT_TOP, modeWidth, 20).build());
+        everywhereButton = addRenderableWidget(Button.builder(Component.translatable("storagefinder.statistics.everywhere"),
+                button -> setNearby(false)).bounds(left + modeWidth + gap, UiTheme.CONTENT_TOP, modeWidth, 20).build());
 
-        searchBox = new EditBox(font, left, 66, contentWidth, 20,
+        searchBox = new EditBox(font, left, UiTheme.CONTENT_TOP + 24, contentWidth, 20,
                 Component.translatable("storagefinder.statistics.search"));
         searchBox.setHint(Component.translatable("storagefinder.statistics.search_hint"));
+        searchBox.setValue(previousQuery);
         searchBox.setResponder(this::filter);
         addRenderableWidget(searchBox);
 
         int bottomY = height - 30;
         int buttonWidth = (contentWidth - gap * 2) / 3;
-        addRenderableWidget(Button.builder(Component.translatable("storagefinder.statistics.previous"), button -> {
-            page = Math.max(0, page - 1);
-        }).bounds(left, bottomY, buttonWidth, 20).build());
+        previousButton = addRenderableWidget(Button.builder(Component.translatable("storagefinder.statistics.previous"),
+                button -> changePage(-1)).bounds(left, bottomY, buttonWidth, 20).build());
         addRenderableWidget(Button.builder(Component.translatable("storagefinder.statistics.back"), button -> back())
                 .bounds(left + buttonWidth + gap, bottomY, buttonWidth, 20).build());
-        addRenderableWidget(Button.builder(Component.translatable("storagefinder.statistics.next"), button -> {
-            int pages = Math.max(1, (filteredEntries.size() + rows - 1) / rows);
-            page = Math.min(pages - 1, page + 1);
-        }).bounds(left + (buttonWidth + gap) * 2, bottomY, buttonWidth, 20).build());
+        nextButton = addRenderableWidget(Button.builder(Component.translatable("storagefinder.statistics.next"),
+                button -> changePage(1)).bounds(left + (buttonWidth + gap) * 2, bottomY, buttonWidth, 20).build());
 
         reloadEntries();
         setInitialFocus(searchBox);
@@ -77,56 +84,80 @@ public final class StorageStatisticsScreen extends Screen {
 
     @Override
     public void extractRenderState(GuiGraphicsExtractor graphics, int mouseX, int mouseY, float tickDelta) {
-        // Design System 2.0 — dark container background
-        graphics.fill(0, 0, width, height, 0xF00D141F);
-
-        // Header bar
-        graphics.fill(0, 0, width, 28, 0xFF182638);
-        graphics.fill(0, 27, width, 28, 0xFF2E435E);
-        graphics.centeredText(font, title, width / 2, 9, 0xFFFFFFFF);
         Component description = nearby
                 ? Component.translatable("storagefinder.statistics.description",
                         StorageFinderConfig.current().searchRadiusChunks)
                 : Component.translatable("storagefinder.statistics.description_everywhere");
-        graphics.centeredText(font, description, width / 2, 21, 0xFF9AA4B2);
+        UiTheme.drawFrame(graphics, font, width, height, title, description);
         super.extractRenderState(graphics, mouseX, mouseY, tickDelta);
 
+        int hovered = rowAt(mouseX, mouseY);
         int start = page * rows;
         int end = Math.min(filteredEntries.size(), start + rows);
-        int listY = 89;
         for (int index = start; index < end; index++) {
             Entry entry = filteredEntries.get(index);
-            int rowY = listY + (index - start) * ROW_HEIGHT;
-            graphics.fill(left, rowY, left + contentWidth, rowY + ROW_HEIGHT - 1,
-                    (index & 1) == 0 ? 0xEE1B2430 : 0xEE202B38);
-            graphics.item(entry.stack(), left + 4, rowY + 2);
-            graphics.text(font, entry.label(), left + 27, rowY + 7, 0xFFF2F5F8, true);
-            Component amount = Component.literal("× " + entry.count());
-            graphics.text(font, amount, left + contentWidth - font.width(amount) - 7,
-                    rowY + 7, 0xFF69F0AE, true);
+            int rowY = LIST_TOP + (index - start) * ROW_HEIGHT;
+            Integer searchColor = StorageFinderClient.searchColor(entry.stack());
+            int background = index == hovered ? UiTheme.ROW_HOVER
+                    : searchColor != null ? UiTheme.ROW_ACTIVE
+                    : (index & 1) == 0 ? UiTheme.ROW : UiTheme.ROW_ALT;
+            graphics.fill(left, rowY, left + contentWidth, rowY + ROW_HEIGHT - 1, background);
+            if (searchColor != null) {
+                graphics.fill(left, rowY, left + 3, rowY + ROW_HEIGHT - 1, searchColor);
+            }
+            graphics.item(entry.stack(), left + 5, rowY + 2);
+            String amount = "× " + entry.count();
+            int amountWidth = font.width(amount);
+            graphics.text(font, UiTheme.trim(font, entry.label().getString(), contentWidth - 40 - amountWidth),
+                    left + 27, rowY + 7, UiTheme.BODY, true);
+            graphics.text(font, amount, left + contentWidth - amountWidth - 7, rowY + 7, UiTheme.SUCCESS, true);
         }
+        int footerY = LIST_TOP + rows * ROW_HEIGHT + 4;
         if (filteredEntries.isEmpty()) {
-            graphics.centeredText(font, Component.translatable("storagefinder.statistics.empty"),
-                    width / 2, listY + 8, 0xFFFFA0A0);
+            Component empty = allEntries.isEmpty()
+                    ? Component.translatable("storagefinder.statistics.empty")
+                    : Component.translatable("storagefinder.statistics.no_matches");
+            graphics.textWithWordWrap(font, empty, left, LIST_TOP + 6, contentWidth, UiTheme.MUTED);
         } else {
-            int pages = Math.max(1, (filteredEntries.size() + rows - 1) / rows);
-            graphics.centeredText(font, Component.translatable("storagefinder.statistics.page", page + 1, pages),
-                    width / 2, height - 43, 0xFF9AA4B2);
+            Component footer = Component.translatable("storagefinder.statistics.page", page + 1, pageCount());
+            footer = footer.copy().append(Component.translatable("storagefinder.statistics.click_hint"));
+            graphics.centeredText(font, UiTheme.trim(font, footer.getString(), contentWidth),
+                    width / 2, footerY, UiTheme.MUTED);
         }
     }
 
     @Override
+    public boolean mouseClicked(MouseButtonEvent event, boolean doubleClick) {
+        int index = rowAt(event.x(), event.y());
+        if (index >= 0 && event.button() == InputConstants.MOUSE_BUTTON_LEFT) {
+            Entry entry = filteredEntries.get(index);
+            StorageFinderClient.selectFromSearch(entry.stack(), entry.label());
+            return true;
+        }
+        return super.mouseClicked(event, doubleClick);
+    }
+
+    @Override
+    public boolean mouseScrolled(double mouseX, double mouseY, double scrollX, double scrollY) {
+        if (scrollY != 0.0 && !filteredEntries.isEmpty()) {
+            changePage(scrollY > 0 ? -1 : 1);
+            return true;
+        }
+        return super.mouseScrolled(mouseX, mouseY, scrollX, scrollY);
+    }
+
+    @Override
     public boolean keyPressed(KeyEvent event) {
-        if (event.key() == GLFW.GLFW_KEY_ESCAPE) {
+        if (event.key() == InputConstants.KEY_ESCAPE) {
             back();
             return true;
         }
-        if (event.key() == GLFW.GLFW_KEY_PAGE_DOWN) {
-            page = Math.min(Math.max(0, (filteredEntries.size() - 1) / rows), page + 1);
+        if (event.key() == InputConstants.KEY_PAGEDOWN) {
+            changePage(1);
             return true;
         }
-        if (event.key() == GLFW.GLFW_KEY_PAGE_UP) {
-            page = Math.max(0, page - 1);
+        if (event.key() == InputConstants.KEY_PAGEUP) {
+            changePage(-1);
             return true;
         }
         return super.keyPressed(event);
@@ -137,12 +168,43 @@ public final class StorageStatisticsScreen extends Screen {
         back();
     }
 
+    private int rowAt(double x, double y) {
+        if (x < left || x >= left + contentWidth || y < LIST_TOP) {
+            return -1;
+        }
+        int local = (int) ((y - LIST_TOP) / ROW_HEIGHT);
+        int index = page * rows + local;
+        return local < rows && index < filteredEntries.size() ? index : -1;
+    }
+
+    private int pageCount() {
+        return Math.max(1, (filteredEntries.size() + rows - 1) / rows);
+    }
+
+    private void changePage(int delta) {
+        page = Math.max(0, Math.min(pageCount() - 1, page + delta));
+        updateButtons();
+    }
+
+    private void setNearby(boolean value) {
+        nearby = value;
+        reloadEntries();
+    }
+
+    private void updateButtons() {
+        nearbyButton.active = !nearby;
+        everywhereButton.active = nearby;
+        previousButton.active = page > 0;
+        nextButton.active = page < pageCount() - 1;
+    }
+
     private void filter(String query) {
         String needle = query.strip().toLowerCase(Locale.ROOT);
         filteredEntries = allEntries.stream().filter(entry -> needle.isEmpty()
                 || entry.label().getString().toLowerCase(Locale.ROOT).contains(needle)
                 || entry.key().toLowerCase(Locale.ROOT).contains(needle)).toList();
         page = 0;
+        updateButtons();
     }
 
     private void reloadEntries() {
@@ -153,15 +215,34 @@ public final class StorageStatisticsScreen extends Screen {
     }
 
     private List<Entry> buildEntries(Map<String, Integer> counts) {
+        Map<Identifier, Holder<Enchantment>> enchantments = enchantmentHolders();
         List<Entry> result = new ArrayList<>();
         counts.forEach((key, count) -> {
-            if (count <= 0) return;
+            if (count <= 0) {
+                return;
+            }
             String baseId = key.contains("|") ? key.substring(0, key.indexOf('|')) : key;
             Identifier id = Identifier.tryParse(baseId);
             Item item = id == null ? Items.AIR : BuiltInRegistries.ITEM.getValue(id);
-            if (item == null || item == Items.AIR) return;
+            if (item == null || item == Items.AIR) {
+                return;
+            }
             ItemStack stack = new ItemStack(item);
-            Component label = enchantmentLabel(key, stack);
+            Component label = stack.getHoverName();
+            int marker = key.indexOf(ENCHANTMENT_MARKER);
+            if (marker >= 0) {
+                String enchantmentKey = key.substring(marker + ENCHANTMENT_MARKER.length());
+                Identifier enchantmentId = Identifier.tryParse(enchantmentKey);
+                Holder<Enchantment> holder = enchantmentId == null ? null : enchantments.get(enchantmentId);
+                if (holder != null) {
+                    ItemEnchantments.Mutable stored = new ItemEnchantments.Mutable(ItemEnchantments.EMPTY);
+                    stored.set(holder, 1);
+                    stack.set(DataComponents.STORED_ENCHANTMENTS, stored.toImmutable());
+                    label = Component.translatable("storagefinder.statistics.enchanted", holder.value().description());
+                } else {
+                    label = Component.translatable("storagefinder.statistics.enchanted", enchantmentKey);
+                }
+            }
             result.add(new Entry(key, label, stack, count));
         });
         result.sort(Comparator.comparingInt(Entry::count).reversed()
@@ -169,26 +250,14 @@ public final class StorageStatisticsScreen extends Screen {
         return List.copyOf(result);
     }
 
-    private Component enchantmentLabel(String key, ItemStack fallback) {
-        if (!key.contains("|stored_enchantment=")) {
-            return fallback.getHoverName();
+    private Map<Identifier, Holder<Enchantment>> enchantmentHolders() {
+        Map<Identifier, Holder<Enchantment>> holders = new HashMap<>();
+        if (minecraft != null && minecraft.level != null) {
+            minecraft.level.registryAccess().lookup(Registries.ENCHANTMENT).ifPresent(registry ->
+                    registry.entrySet().forEach(entry -> holders.put(entry.getKey().identifier(),
+                            registry.wrapAsHolder(entry.getValue()))));
         }
-        String enchantmentKey = key.substring(key.indexOf('=') + 1);
-        Identifier enchantmentId = Identifier.tryParse(enchantmentKey);
-        if (minecraft != null && minecraft.level != null && enchantmentId != null) {
-            var registry = minecraft.level.registryAccess().lookup(Registries.ENCHANTMENT);
-            if (registry.isPresent()) {
-                Component localized = registry.get().entrySet().stream()
-                        .filter(entry -> entry.getKey().identifier().equals(enchantmentId))
-                        .map(entry -> entry.getValue().description())
-                        .findFirst()
-                        .orElse(null);
-                if (localized != null) {
-                    return Component.translatable("storagefinder.statistics.enchanted", localized);
-                }
-            }
-        }
-        return Component.translatable("storagefinder.statistics.enchanted", enchantmentKey);
+        return holders;
     }
 
     private void back() {

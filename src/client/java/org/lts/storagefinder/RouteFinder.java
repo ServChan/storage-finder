@@ -6,15 +6,21 @@ import net.minecraft.core.BlockPos;
 import net.minecraft.core.Direction;
 import net.minecraft.tags.BlockTags;
 import net.minecraft.tags.FluidTags;
+import net.minecraft.util.Mth;
 import net.minecraft.world.entity.Pose;
 import net.minecraft.world.level.block.Block;
 import net.minecraft.world.level.block.BarrelBlock;
 import net.minecraft.world.level.block.Blocks;
+import net.minecraft.world.level.block.DoorBlock;
+import net.minecraft.world.level.block.FenceGateBlock;
 import net.minecraft.world.level.block.state.BlockState;
 import net.minecraft.world.level.ClipContext;
 import net.minecraft.world.phys.AABB;
 import net.minecraft.world.phys.BlockHitResult;
 import net.minecraft.world.phys.Vec3;
+import net.minecraft.world.phys.shapes.BooleanOp;
+import net.minecraft.world.phys.shapes.CollisionContext;
+import net.minecraft.world.phys.shapes.Shapes;
 import net.minecraft.world.phys.shapes.VoxelShape;
 
 import java.util.ArrayList;
@@ -30,13 +36,23 @@ public final class RouteFinder {
     private static final int MAX_VISITED = 40_000;
     private static final int VERTICAL_MARGIN = 16;
     private static final double MAX_STEP_UP = 1.001;
-    private static final double MAX_DROP_DOWN = 1.251;
-    private static final double DIAGONAL_COST = Math.sqrt(2.0);
+    private static final double MAX_DIAGONAL_DROP = 1.251;
+    private static final double MAX_SAFE_DROP = 3.0 + 1.0E-4;
+    private static final double RISE_COST_PER_BLOCK = 0.25;
+    private static final double DROP_COST_PER_BLOCK = 0.15;
+    private static final double CLOSED_DOOR_COST = 1.0;
     private static final int DIAGONAL_TRAVERSE_SAMPLES = 3;
+    private static final int FAR_GOAL_RING = 2;
     private static final int[][] HORIZONTAL_OFFSETS = {
             {1, 0}, {-1, 0}, {0, 1}, {0, -1},
             {1, 1}, {1, -1}, {-1, 1}, {-1, -1}
     };
+    private static final int[][] FAR_RING_OFFSETS = ringOffsets(FAR_GOAL_RING);
+    private static final int[] CARDINAL_VERTICAL_CANDIDATES = {0, 1, -1, -2, -3};
+    private static final int[] DIAGONAL_VERTICAL_CANDIDATES = {0, 1, -1};
+    private static final int[] CLIMB_OFFSETS = {1, -1};
+    private static final int[] CARDINAL_STEP_OFFSETS = {0, 1, -1};
+    private static final int[] START_OFFSETS = {0, -1, 1, -2, 2, -3, -4};
 
     private RouteFinder() {
     }
@@ -94,7 +110,7 @@ public final class RouteFinder {
         private final PriorityQueue<Node> open = new PriorityQueue<>(
                 (a, b) -> {
                     int estimated = Double.compare(a.estimatedTotal, b.estimatedTotal);
-                    return estimated != 0 ? estimated : Double.compare(a.cost, b.cost);
+                    return estimated != 0 ? estimated : Double.compare(b.cost, a.cost);
                 });
         private final Map<BlockPos, Double> bestCost = new HashMap<>();
         private final Map<BlockPos, BlockPos> cameFrom = new HashMap<>();
@@ -103,6 +119,7 @@ public final class RouteFinder {
         private GoalHeuristic heuristic;
         private int visited;
         private int foundTargets;
+        private int lastProcessed;
         private boolean completeAfterResult;
         private StepStatus status = StepStatus.RUNNING;
         private FailureReason failureReason;
@@ -123,6 +140,7 @@ public final class RouteFinder {
         }
 
         public StepStatus step(Minecraft minecraft, int nodeBudget) {
+            lastProcessed = 0;
             if (status == StepStatus.FOUND) {
                 if (completeAfterResult) {
                     status = StepStatus.COMPLETE;
@@ -139,9 +157,9 @@ public final class RouteFinder {
                 return status;
             }
 
-            int processed = 0;
             int budget = Math.max(1, nodeBudget);
-            while (!open.isEmpty() && visited < MAX_VISITED && processed++ < budget) {
+            while (!open.isEmpty() && visited < MAX_VISITED && lastProcessed < budget) {
+                lastProcessed++;
                 Node node = open.poll();
                 BlockPos current = node.pos;
                 double currentCost = bestCost.getOrDefault(current, Double.POSITIVE_INFINITY);
@@ -171,9 +189,8 @@ public final class RouteFinder {
                     if (closed.contains(next)) {
                         continue;
                     }
-                    double rise = Math.max(0.0, cell(minecraft, next, cells).surface - currentCell.surface);
-                    double stepCost = movementCost(current, next) + rise * 0.25;
-                    double candidateCost = currentCost + stepCost;
+                    double candidateCost = currentCost
+                            + stepCost(minecraft, current, currentCell, next, cell(minecraft, next, cells));
                     if (candidateCost < bestCost.getOrDefault(next, Double.POSITIVE_INFINITY)) {
                         bestCost.put(next, candidateCost);
                         cameFrom.put(next, current);
@@ -200,6 +217,14 @@ public final class RouteFinder {
 
         public FailureReason failureReason() {
             return failureReason;
+        }
+
+        public int lastProcessed() {
+            return lastProcessed;
+        }
+
+        public BlockPos start() {
+            return start;
         }
 
         private void rebuildOpen() {
@@ -246,14 +271,14 @@ public final class RouteFinder {
                 int dx = Math.abs(pos.getX() - previous.getX());
                 int dz = Math.abs(pos.getZ() - previous.getZ());
                 double heightDifference = surface - previousSurface;
+                boolean diagonal = dx == 1 && dz == 1;
                 boolean verticalClimb = dx == 0 && dz == 0
                         && Math.abs(pos.getY() - previous.getY()) == 1
                         && canClimbBetween(minecraft, previous, pos);
                 boolean horizontalStep = (dx != 0 || dz != 0) && dx <= 1 && dz <= 1;
                 if ((!verticalClimb && !horizontalStep)
-                        || heightDifference > MAX_STEP_UP || heightDifference < -MAX_DROP_DOWN
-                        || (dx == 1 && dz == 1
-                        && !hasDiagonalSupport(minecraft, previous, previousSurface, pos, surface,
+                        || !heightChangeAllowed(heightDifference, diagonal, verticalClimb)
+                        || (diagonal && !hasDiagonalSupport(minecraft, previous, previousSurface, pos, surface,
                         minecraft.level.getMinY(), minecraft.level.getMaxY(), cells))
                         || !canTraverse(minecraft, previous, previousSurface, pos, surface)) {
                     return false;
@@ -277,12 +302,47 @@ public final class RouteFinder {
         double surface = surfaceY(minecraft, end);
         double reach = minecraft.player.blockInteractionRange();
         for (BlockPos physical : storageBlocks) {
-            if (isAdjacentGoal(minecraft, end, physical)
+            if (isGoalColumn(minecraft, end, physical)
                     && canReachStorage(minecraft, end, surface, physical, reach)) {
                 return true;
             }
         }
         return false;
+    }
+
+    public static double pathLength(List<BlockPos> path) {
+        double length = 0.0;
+        for (int i = 1; i < path.size(); i++) {
+            BlockPos from = path.get(i - 1);
+            BlockPos to = path.get(i);
+            length += movementCost(from, to) + Math.abs(to.getY() - from.getY()) * 0.5;
+        }
+        return length;
+    }
+
+    private static boolean heightChangeAllowed(double heightDifference, boolean diagonal, boolean verticalClimb) {
+        if (verticalClimb) {
+            return true;
+        }
+        if (heightDifference > MAX_STEP_UP) {
+            return false;
+        }
+        return heightDifference >= -(diagonal ? MAX_DIAGONAL_DROP : MAX_SAFE_DROP);
+    }
+
+    private static double stepCost(Minecraft minecraft, BlockPos from, Cell fromCell, BlockPos to, Cell toCell) {
+        double heightDifference = toCell.surface - fromCell.surface;
+        double cost = movementCost(from, to);
+        if (heightDifference > 0.0) {
+            cost += heightDifference * RISE_COST_PER_BLOCK;
+        } else if (heightDifference < -MAX_STEP_UP) {
+            cost += -heightDifference * DROP_COST_PER_BLOCK;
+        }
+        if (minecraft.level != null && (isClosedOpenable(minecraft.level.getBlockState(to))
+                || isClosedOpenable(minecraft.level.getBlockState(from)))) {
+            cost += CLOSED_DOOR_COST;
+        }
+        return cost;
     }
 
     private static List<BlockPos> neighbours(Minecraft minecraft, BlockPos current, Cell currentCell,
@@ -291,9 +351,9 @@ public final class RouteFinder {
         double currentSurface = currentCell.surface;
         for (int[] offset : HORIZONTAL_OFFSETS) {
             boolean diagonal = offset[0] != 0 && offset[1] != 0;
-            BlockPos horizontal = current.offset(offset[0], 0, offset[1]);
-            BlockPos[] candidates = {horizontal, horizontal.above(), horizontal.below()};
-            for (BlockPos candidate : candidates) {
+            int[] verticalCandidates = diagonal ? DIAGONAL_VERTICAL_CANDIDATES : CARDINAL_VERTICAL_CANDIDATES;
+            for (int dy : verticalCandidates) {
+                BlockPos candidate = current.offset(offset[0], dy, offset[1]);
                 Cell candidateCell = cell(minecraft, candidate, cells);
                 if (!Double.isFinite(candidateCell.surface)) {
                     continue;
@@ -305,8 +365,7 @@ public final class RouteFinder {
                 if (next.getY() >= minY && next.getY() <= maxY
                         && StorageLocator.withinSearchRadius(minecraft.player.getX(), minecraft.player.getZ(), next)
                         && Double.isFinite(candidateSurface)
-                        && heightDifference <= MAX_STEP_UP
-                        && heightDifference >= -MAX_DROP_DOWN
+                        && heightChangeAllowed(heightDifference, diagonal, false)
                         && nextCell.standable
                         && (!diagonal || hasDiagonalSupport(minecraft, current, currentSurface,
                         next, candidateSurface, minY, maxY, cells))
@@ -318,7 +377,7 @@ public final class RouteFinder {
                 }
             }
         }
-        for (int dy : new int[]{1, -1}) {
+        for (int dy : CLIMB_OFFSETS) {
             BlockPos candidate = current.offset(0, dy, 0);
             Cell candidateCell = cell(minecraft, candidate, cells);
             if (!Double.isFinite(candidateCell.surface)) {
@@ -361,7 +420,7 @@ public final class RouteFinder {
     private static BlockPos findCardinalStep(Minecraft minecraft, BlockPos from,
                                              double fromSurface, int targetX, int targetZ,
                                              int minY, int maxY, Map<BlockPos, Cell> cells) {
-        for (int dy : new int[]{0, 1, -1}) {
+        for (int dy : CARDINAL_STEP_OFFSETS) {
             BlockPos sampled = new BlockPos(targetX, from.getY() + dy, targetZ);
             Cell sampledCell = cell(minecraft, sampled, cells);
             if (!Double.isFinite(sampledCell.surface)) {
@@ -374,7 +433,7 @@ public final class RouteFinder {
                     && StorageLocator.withinSearchRadius(
                     minecraft.player.getX(), minecraft.player.getZ(), normalized)
                     && normalizedCell.standable
-                    && difference <= MAX_STEP_UP && difference >= -MAX_DROP_DOWN
+                    && difference <= MAX_STEP_UP && difference >= -MAX_DIAGONAL_DROP
                     && canTraverse(minecraft, from, fromSurface,
                     normalized, normalizedCell.surface)) {
                 return normalized;
@@ -392,14 +451,14 @@ public final class RouteFinder {
         double fromSurface = cell(minecraft, from, cells).surface;
         double difference = toSurface - fromSurface;
         return Double.isFinite(fromSurface)
-                && difference <= MAX_STEP_UP && difference >= -MAX_DROP_DOWN
+                && difference <= MAX_STEP_UP && difference >= -MAX_DIAGONAL_DROP
                 && canTraverse(minecraft, from, fromSurface, to, toSurface);
     }
 
     private static BlockPos findStart(Minecraft minecraft, BlockPos requested, Map<BlockPos, Cell> cells) {
         BlockPos best = null;
         double bestDistance = Double.POSITIVE_INFINITY;
-        for (int dy : new int[]{0, -1, 1, -2, 2}) {
+        for (int dy : START_OFFSETS) {
             BlockPos candidate = requested.offset(0, dy, 0);
             Cell candidateCell = cell(minecraft, candidate, cells);
             if (Double.isFinite(candidateCell.surface)) {
@@ -426,24 +485,36 @@ public final class RouteFinder {
         }
         Set<BlockPos> storageBlocks = new HashSet<>(StorageIndex.physicalBlocks(minecraft, storage));
         double reach = minecraft.player.blockInteractionRange();
-        int horizontalRange = Math.max(1, (int) Math.ceil(reach));
+        int verticalRange = Math.max(1, (int) Math.ceil(reach));
         for (BlockPos physical : storageBlocks) {
             BlockState storageState = minecraft.level.getBlockState(physical);
             boolean walkableBarrelTop = storageState.getBlock() instanceof BarrelBlock
                     && storageState.getValue(BarrelBlock.FACING) == Direction.UP;
-            for (int[] offset : HORIZONTAL_OFFSETS) {
-                BlockPos adjacent = physical.offset(offset[0], 0, offset[1]);
-                for (int dy = -horizontalRange; dy <= 2; dy++) {
-                    addGoalIfReachable(minecraft, adjacent.offset(0, dy, 0), physical,
-                            storageBlocks, reach, cells, goals);
-                }
-            }
+            int before = goals.size();
+            addRingGoals(minecraft, physical, HORIZONTAL_OFFSETS, verticalRange,
+                    storageBlocks, reach, cells, goals);
             if (walkableBarrelTop) {
                 addGoalIfReachable(minecraft, physical.above(), physical,
                         storageBlocks, reach, cells, goals);
             }
+            if (goals.size() == before && reach > FAR_GOAL_RING) {
+                addRingGoals(minecraft, physical, FAR_RING_OFFSETS, verticalRange,
+                        storageBlocks, reach, cells, goals);
+            }
         }
         return goals;
+    }
+
+    private static void addRingGoals(Minecraft minecraft, BlockPos physical, int[][] offsets,
+                                     int verticalRange, Set<BlockPos> storageBlocks, double reach,
+                                     Map<BlockPos, Cell> cells, Set<BlockPos> goals) {
+        for (int[] offset : offsets) {
+            BlockPos adjacent = physical.offset(offset[0], 0, offset[1]);
+            for (int dy = -verticalRange; dy <= 2; dy++) {
+                addGoalIfReachable(minecraft, adjacent.offset(0, dy, 0), physical,
+                        storageBlocks, reach, cells, goals);
+            }
+        }
     }
 
     private static void addGoalIfReachable(Minecraft minecraft, BlockPos candidate,
@@ -458,7 +529,7 @@ public final class RouteFinder {
             return;
         }
         BlockPos normalized = canonicalFeet(candidate, candidateCell.surface);
-        if (storageBlocks.contains(normalized)) {
+        if (storageBlocks.contains(normalized) || goals.contains(normalized)) {
             return;
         }
         Cell normalizedCell = cell(minecraft, normalized, cells);
@@ -467,6 +538,18 @@ public final class RouteFinder {
                 && canReachStorage(minecraft, normalized, normalizedCell.surface, physical, reach)) {
             goals.add(normalized);
         }
+    }
+
+    private static int[][] ringOffsets(int radius) {
+        List<int[]> offsets = new ArrayList<>();
+        for (int dx = -radius; dx <= radius; dx++) {
+            for (int dz = -radius; dz <= radius; dz++) {
+                if (Math.max(Math.abs(dx), Math.abs(dz)) == radius) {
+                    offsets.add(new int[]{dx, dz});
+                }
+            }
+        }
+        return offsets.toArray(new int[0][]);
     }
 
     private static BlockPos canonicalFeet(BlockPos sampledCell, double surface) {
@@ -501,8 +584,7 @@ public final class RouteFinder {
             return false;
         }
 
-        return level.noCollision(minecraft.player,
-                bodyBox(minecraft, feet, surface, isSwimmingCell(minecraft, feet)));
+        return isClear(minecraft, bodyBox(minecraft, feet, surface, isSwimmingCell(minecraft, feet)));
     }
 
     public static double surfaceY(Minecraft minecraft, BlockPos feet) {
@@ -530,7 +612,11 @@ public final class RouteFinder {
     }
 
     private static double collisionTop(ClientLevel level, BlockPos pos, double footprintRadius) {
-        VoxelShape shape = level.getBlockState(pos).getCollisionShape(level, pos);
+        BlockState state = level.getBlockState(pos);
+        if (isPassableOpenable(state)) {
+            return Double.NaN;
+        }
+        VoxelShape shape = state.getCollisionShape(level, pos);
         if (shape.isEmpty()) {
             return Double.NaN;
         }
@@ -553,6 +639,68 @@ public final class RouteFinder {
         return Double.isFinite(localTop) ? pos.getY() + localTop : Double.NaN;
     }
 
+    private static boolean isClear(Minecraft minecraft, AABB box) {
+        ClientLevel level = minecraft.level;
+        if (level == null || minecraft.player == null) {
+            return false;
+        }
+        int minX = Mth.floor(box.minX);
+        int maxX = Mth.floor(box.maxX - 1.0E-7);
+        int minY = Mth.floor(box.minY) - 1;
+        int maxY = Mth.floor(box.maxY - 1.0E-7);
+        int minZ = Mth.floor(box.minZ);
+        int maxZ = Mth.floor(box.maxZ - 1.0E-7);
+        CollisionContext context = CollisionContext.of(minecraft.player);
+        BlockPos.MutableBlockPos cursor = new BlockPos.MutableBlockPos();
+        VoxelShape body = null;
+        for (int x = minX; x <= maxX; x++) {
+            for (int z = minZ; z <= maxZ; z++) {
+                if (!level.hasChunk(x >> 4, z >> 4)) {
+                    return false;
+                }
+                for (int y = minY; y <= maxY; y++) {
+                    cursor.set(x, y, z);
+                    BlockState state = level.getBlockState(cursor);
+                    if (state.isAir() || isPassableOpenable(state)) {
+                        continue;
+                    }
+                    VoxelShape shape = state.getCollisionShape(level, cursor, context);
+                    if (shape.isEmpty()) {
+                        continue;
+                    }
+                    if (body == null) {
+                        body = Shapes.create(box);
+                    }
+                    if (Shapes.joinIsNotEmpty(shape.move(x, y, z), body, BooleanOp.AND)) {
+                        return false;
+                    }
+                }
+            }
+        }
+        return true;
+    }
+
+    private static boolean isPassableOpenable(BlockState state) {
+        if (!StorageFinderConfig.current().routeThroughDoors) {
+            return false;
+        }
+        Block block = state.getBlock();
+        if (block instanceof DoorBlock door) {
+            return door.type().canOpenByHand();
+        }
+        return block instanceof FenceGateBlock;
+    }
+
+    private static boolean isClosedOpenable(BlockState state) {
+        if (!isPassableOpenable(state)) {
+            return false;
+        }
+        if (state.getBlock() instanceof DoorBlock) {
+            return !state.getValue(DoorBlock.OPEN);
+        }
+        return !state.getValue(FenceGateBlock.OPEN);
+    }
+
     private static boolean canTraverse(Minecraft minecraft, BlockPos from, double fromSurface,
                                        BlockPos to, double toSurface) {
         if (!Double.isFinite(fromSurface) || !Double.isFinite(toSurface)
@@ -568,7 +716,7 @@ public final class RouteFinder {
             double top = Math.max(fromSurface, toSurface) + bodyHeight(minecraft, swimming);
             AABB vertical = bodyBox(minecraft, from, bottom - 0.0001, swimming)
                     .setMaxY(top);
-            return minecraft.level.noCollision(minecraft.player, vertical);
+            return isClear(minecraft, vertical);
         }
 
         double travelSurface = Math.max(fromSurface, toSurface);
@@ -577,7 +725,15 @@ public final class RouteFinder {
         if (!diagonal) {
             AABB fromBody = bodyBox(minecraft, from, travelSurface, swimming);
             AABB toBody = bodyBox(minecraft, to, travelSurface, swimming);
-            return minecraft.level.noCollision(minecraft.player, fromBody.minmax(toBody));
+            if (!isClear(minecraft, fromBody.minmax(toBody))) {
+                return false;
+            }
+            if (fromSurface - toSurface > MAX_DIAGONAL_DROP) {
+                AABB fallColumn = bodyBox(minecraft, to, toSurface, swimming)
+                        .setMaxY(fromSurface + bodyHeight(minecraft, swimming));
+                return isClear(minecraft, fallColumn);
+            }
+            return true;
         }
 
         double fromX = from.getX() + 0.5;
@@ -591,16 +747,11 @@ public final class RouteFinder {
             double progress = sample / (double) DIAGONAL_TRAVERSE_SAMPLES;
             double centerX = fromX + (toX - fromX) * progress;
             double centerZ = fromZ + (toZ - fromZ) * progress;
-            if (!minecraft.level.noCollision(minecraft.player,
-                    bodyBoxAt(minecraft, centerX, centerZ, travelSurface, swimming))) {
+            if (!isClear(minecraft, bodyBoxAt(minecraft, centerX, centerZ, travelSurface, swimming))) {
                 return false;
             }
         }
         return true;
-    }
-
-    private static AABB bodyBox(Minecraft minecraft, BlockPos feet, double surface) {
-        return bodyBox(minecraft, feet, surface, false);
     }
 
     private static AABB bodyBox(Minecraft minecraft, BlockPos feet, double surface,
@@ -673,10 +824,10 @@ public final class RouteFinder {
         return hit.getBlockPos().equals(storage);
     }
 
-    private static boolean isAdjacentGoal(Minecraft minecraft, BlockPos feet, BlockPos storage) {
+    private static boolean isGoalColumn(Minecraft minecraft, BlockPos feet, BlockPos storage) {
         int dx = Math.abs(feet.getX() - storage.getX());
         int dz = Math.abs(feet.getZ() - storage.getZ());
-        if ((dx != 0 || dz != 0) && dx <= 1 && dz <= 1) {
+        if ((dx != 0 || dz != 0) && dx <= FAR_GOAL_RING && dz <= FAR_GOAL_RING) {
             return true;
         }
         if (dx != 0 || dz != 0 || minecraft.level == null) {
@@ -689,7 +840,7 @@ public final class RouteFinder {
 
     private static double movementCost(BlockPos from, BlockPos to) {
         return from.getX() != to.getX() && from.getZ() != to.getZ()
-                ? DIAGONAL_COST : 1.0;
+                ? RouteMath.DIAGONAL_COST : 1.0;
     }
 
     private static boolean hasChunk(ClientLevel level, BlockPos pos) {
@@ -701,7 +852,8 @@ public final class RouteFinder {
                 || block == Blocks.FIRE || block == Blocks.SOUL_FIRE
                 || block == Blocks.CAMPFIRE || block == Blocks.SOUL_CAMPFIRE
                 || block == Blocks.SWEET_BERRY_BUSH || block == Blocks.WITHER_ROSE
-                || block == Blocks.POWDER_SNOW;
+                || block == Blocks.POWDER_SNOW || block == Blocks.LAVA_CAULDRON
+                || block == Blocks.POINTED_DRIPSTONE;
     }
 
     private static final class GoalHeuristic {
@@ -721,6 +873,9 @@ public final class RouteFinder {
                         bounds == null ? Bounds.at(goal) : bounds.include(goal));
                 all = all == null ? Bounds.at(goal) : all.include(goal);
             }
+            if (all == null) {
+                return new GoalHeuristic(List.of());
+            }
             if (byOwner.size() <= MAX_INDIVIDUAL_BOUNDS) {
                 return new GoalHeuristic(List.copyOf(byOwner.values()));
             }
@@ -728,6 +883,9 @@ public final class RouteFinder {
         }
 
         private double distance(BlockPos pos) {
+            if (bounds.isEmpty()) {
+                return 0.0;
+            }
             double best = Double.POSITIVE_INFINITY;
             for (Bounds bound : bounds) {
                 best = Math.min(best, bound.distance(pos));
@@ -748,24 +906,20 @@ public final class RouteFinder {
         return path;
     }
 
-    private record Bounds(int minX, int maxX, int minZ, int maxZ) {
+    private record Bounds(int minX, int maxX, int minY, int maxY, int minZ, int maxZ) {
         private static Bounds at(BlockPos pos) {
-            return new Bounds(pos.getX(), pos.getX(), pos.getZ(), pos.getZ());
+            return new Bounds(pos.getX(), pos.getX(), pos.getY(), pos.getY(), pos.getZ(), pos.getZ());
         }
 
         private Bounds include(BlockPos pos) {
             return new Bounds(Math.min(minX, pos.getX()), Math.max(maxX, pos.getX()),
+                    Math.min(minY, pos.getY()), Math.max(maxY, pos.getY()),
                     Math.min(minZ, pos.getZ()), Math.max(maxZ, pos.getZ()));
         }
 
         private double distance(BlockPos pos) {
-            int dx = pos.getX() < minX ? minX - pos.getX()
-                    : pos.getX() > maxX ? pos.getX() - maxX : 0;
-            int dz = pos.getZ() < minZ ? minZ - pos.getZ()
-                    : pos.getZ() > maxZ ? pos.getZ() - maxZ : 0;
-            int diagonal = Math.min(dx, dz);
-            int straight = Math.max(dx, dz) - diagonal;
-            return diagonal * DIAGONAL_COST + straight;
+            return RouteMath.boxLowerBound(pos.getX(), pos.getY(), pos.getZ(),
+                    minX, maxX, minY, maxY, minZ, maxZ);
         }
     }
 

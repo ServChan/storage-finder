@@ -17,7 +17,7 @@
   ],
   "depends": {
     "fabricloader": ">=0.19.3",
-    "minecraft": ">=26.1.2 <=26.2",
+    "minecraft": "~26.3",
     "java": ">=25",
     "fabric-key-mapping-api-v1": "*",
     "fabric-lifecycle-events-v1": "*",
@@ -25,6 +25,6 @@
   },
   "suggests": {
     "modmenu": "*",
-    "ltsservereconomy": ">=1.0.2"
+    "ltsservereconomy": ">=1.1.0"
   }
 }
