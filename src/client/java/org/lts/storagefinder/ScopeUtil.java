@@ -11,16 +11,24 @@ public final class ScopeUtil {
         if (minecraft.level == null) {
             return "";
         }
+        return server(minecraft) + "|" + minecraft.level.dimension().identifier() + WorldScopeTracker.seedSuffix();
+    }
 
-        String server;
+    public static String ender(Minecraft minecraft) {
+        if (minecraft.level == null || minecraft.player == null) {
+            return "";
+        }
+        return server(minecraft) + "|ender:" + minecraft.player.getUUID();
+    }
+
+    private static String server(Minecraft minecraft) {
         ServerData data = minecraft.getCurrentServer();
         if (data != null) {
-            server = data.ip;
-        } else if (minecraft.getSingleplayerServer() != null) {
-            server = "singleplayer:" + minecraft.getSingleplayerServer().getWorldData().getLevelName();
-        } else {
-            server = "local";
+            return data.ip;
         }
-        return server + "|" + minecraft.level.dimension().identifier() + WorldScopeTracker.seedSuffix();
+        if (minecraft.getSingleplayerServer() != null) {
+            return "singleplayer:" + minecraft.getSingleplayerServer().getWorldData().getLevelName();
+        }
+        return "local";
     }
 }

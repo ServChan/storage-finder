@@ -3,11 +3,9 @@ package org.lts.storagefinder;
 import net.minecraft.client.Minecraft;
 import net.minecraft.core.BlockPos;
 import net.minecraft.world.entity.decoration.ItemFrame;
+import net.minecraft.world.level.block.state.BlockState;
 import net.minecraft.world.phys.AABB;
 import net.minecraft.world.phys.Vec3;
-import net.minecraft.world.level.block.BarrelBlock;
-import net.minecraft.world.level.block.ChestBlock;
-import net.minecraft.world.level.block.ShulkerBoxBlock;
 
 import java.util.ArrayList;
 import java.util.Comparator;
@@ -21,6 +19,9 @@ import java.util.Set;
 public final class StorageLocator {
     private static final int FAILED_ROUTE_RETRY_REFRESHES = 10;
     private static final int ROUTE_REFRESH_INTERVAL = 10;
+    private static final int FULL_VALIDATION_INTERVAL = 4;
+    private static final int PREFIX_VALIDATION_NODES = 24;
+    private static final int FAR_REFRESH_INTERVAL = 4;
     private static final int START_TOLERANCE_HORIZONTAL = 4;
     private static final int START_TOLERANCE_VERTICAL = 2;
     private static final int MIN_ROUTE_CANDIDATES = 12;
@@ -31,13 +32,21 @@ public final class StorageLocator {
     private final Map<Integer, FailedRouteAttempt> failedRouteAttempts = new HashMap<>();
     private final Map<Integer, List<BlockPos>> latestCandidatesByColor = new LinkedHashMap<>();
     private final Map<Integer, Integer> latestItemCountsByColor = new LinkedHashMap<>();
-    private final Map<BlockPos, IndexFreshness> latestFreshnessByStorage = new HashMap<>();
     private final Map<Integer, Map<BlockPos, IndexFreshness>> latestFreshnessByColor = new HashMap<>();
     private final Map<Integer, Double> latestNearestDistanceByColor = new LinkedHashMap<>();
     private final Map<Integer, RouteFinder.FailureReason> routeFailures = new HashMap<>();
     private final Map<Integer, RouteJob> routeJobs = new LinkedHashMap<>();
+    private final Map<Integer, FarTarget> farTargets = new HashMap<>();
+    private final Map<Integer, Integer> enderCounts = new HashMap<>();
     private long refreshSerial;
     private int routeJobCursor;
+    private long farSelectionVersion = -1L;
+    private long farIndexRevision = -1L;
+    private long farRefreshSerial = Long.MIN_VALUE / 2;
+    private String farScope = "";
+    private long statsVersion;
+    private long cachedStatsVersion = -1L;
+    private Map<Integer, QueryStats> cachedStats = Map.of();
 
     public void clear() {
         matches.clear();
@@ -46,18 +55,21 @@ public final class StorageLocator {
         failedRouteAttempts.clear();
         latestCandidatesByColor.clear();
         latestItemCountsByColor.clear();
-        latestFreshnessByStorage.clear();
         latestFreshnessByColor.clear();
         latestNearestDistanceByColor.clear();
         routeFailures.clear();
         routeJobs.clear();
+        farTargets.clear();
+        enderCounts.clear();
+        farSelectionVersion = -1L;
+        statsVersion++;
     }
 
     public void refresh(Minecraft minecraft, SearchSelection selection, StorageIndex index) {
         matches.clear();
-        latestFreshnessByStorage.clear();
         latestFreshnessByColor.clear();
         refreshSerial++;
+        statsVersion++;
         if (minecraft.level == null || minecraft.player == null || selection.isEmpty()) {
             routesByColor.clear();
             routeDiagnostics.clear();
@@ -67,85 +79,158 @@ public final class StorageLocator {
             latestNearestDistanceByColor.clear();
             routeFailures.clear();
             routeJobs.clear();
+            farTargets.clear();
+            enderCounts.clear();
             return;
         }
 
         StorageFinderConfig config = StorageFinderConfig.current();
-
-        Map<BlockPos, Map<String, Integer>> itemsByStorage = new HashMap<>();
-        Map<BlockPos, Set<String>> rememberedItemsByStorage = new HashMap<>();
-        Map<Integer, LinkedHashSet<BlockPos>> candidateSetsByColor = new LinkedHashMap<>();
-        selection.entries().values().forEach(color ->
-                candidateSetsByColor.computeIfAbsent(color, ignored -> new LinkedHashSet<>()));
         double playerX = minecraft.player.getX();
         double playerZ = minecraft.player.getZ();
+        BlockPos playerPos = minecraft.player.blockPosition();
         long now = System.currentTimeMillis();
-        double radius = config.radiusBlocks();
-        AABB area = new AABB(playerX - radius, minecraft.level.getMinY(), playerZ - radius,
-                playerX + radius, minecraft.level.getMaxY(), playerZ + radius);
-        if (config.searchItemFrames) for (ItemFrame frame : minecraft.level.getEntitiesOfClass(ItemFrame.class, area)) {
-            if (frame.getItem().isEmpty()) {
-                continue;
-            }
-            BlockPos support = frame.getPos().relative(frame.getDirection().getOpposite());
-            if (!withinSearchRadius(playerX, playerZ, support) || !isStorage(minecraft, support)) {
-                continue;
-            }
-            BlockPos canonical = StorageIndex.canonicalPos(minecraft, support);
-            Map<String, Integer> frameItems = itemsByStorage.computeIfAbsent(canonical,
-                    ignored -> new LinkedHashMap<>());
-            SearchSelection.itemIds(frame.getItem()).forEach(item -> frameItems.putIfAbsent(item, 0));
-            latestFreshnessByStorage.putIfAbsent(canonical, IndexFreshness.FRAME_ONLY);
-        }
-
         String scope = ScopeUtil.current(minecraft);
-        if (config.searchRememberedContents) {
-            index.migrateLegacyScopeIfNearby(scope, minecraft.player.blockPosition());
-        }
-        if (config.searchRememberedContents) for (StorageIndex.Record record : index.recordsInScope(scope)) {
-            BlockPos pos = record.pos();
-            if (!minecraft.level.hasChunk(pos.getX() >> 4, pos.getZ() >> 4)) {
-                continue;
-            }
-            if (isStorage(minecraft, pos) && storageWithinSearchRadius(minecraft, playerX, playerZ, pos)) {
-                Map<String, Integer> remembered = itemsByStorage.computeIfAbsent(pos,
+
+        Map<BlockPos, Map<String, Integer>> itemsByStorage = new HashMap<>();
+        Map<BlockPos, Map<String, Integer>> rememberedByStorage = new HashMap<>();
+        Map<BlockPos, IndexFreshness> freshnessByStorage = new HashMap<>();
+
+        double radius = config.radiusBlocks();
+        if (config.searchItemFrames) {
+            AABB area = new AABB(playerX - radius, minecraft.level.getMinY(), playerZ - radius,
+                    playerX + radius, minecraft.level.getMaxY(), playerZ + radius);
+            for (ItemFrame frame : minecraft.level.getEntitiesOfClass(ItemFrame.class, area)) {
+                if (frame.getItem().isEmpty()) {
+                    continue;
+                }
+                BlockPos support = frame.getPos().relative(frame.getDirection().getOpposite());
+                if (!withinSearchRadius(playerX, playerZ, support) || !isStorage(minecraft, support)) {
+                    continue;
+                }
+                BlockPos canonical = StorageIndex.canonicalPos(minecraft, support);
+                Map<String, Integer> frameItems = itemsByStorage.computeIfAbsent(canonical,
                         ignored -> new LinkedHashMap<>());
-                record.items.forEach(item -> remembered.putIfAbsent(item, 0));
-                rememberedItemsByStorage.computeIfAbsent(pos, ignored -> new LinkedHashSet<>())
-                        .addAll(record.items);
-                record.normalizedCounts().forEach((item, count) -> remembered.merge(item, count, Math::max));
-                latestFreshnessByStorage.put(pos,
-                        IndexFreshness.classify(record.updatedAt, now));
+                StorageContents.of(frame.getItem()).keySet().forEach(item -> frameItems.putIfAbsent(item, 0));
+                freshnessByStorage.putIfAbsent(canonical, IndexFreshness.FRAME_ONLY);
             }
         }
 
+        IndexRecord ender = index.get(ScopeUtil.ender(minecraft), BlockPos.ZERO);
+        if (config.searchRememberedContents) {
+            index.migrateLegacyScopeIfNearby(scope, playerPos);
+            List<String> gone = new ArrayList<>();
+            Map<BlockPos, IndexRecord> newestByStorage = new LinkedHashMap<>();
+            Map<BlockPos, String> familyByStorage = new HashMap<>();
+            for (IndexRecord record : index.near(scope, playerPos, config.searchRadiusChunks + 1)) {
+                BlockPos pos = StorageIndex.pos(record);
+                if (!minecraft.level.hasChunk(record.chunkX(), record.chunkZ())) {
+                    continue;
+                }
+                BlockState state = minecraft.level.getBlockState(pos);
+                String family = StorageBlocks.family(state);
+                if (!StorageBlocks.matchesRecord(record.block(), family)) {
+                    if (StorageBlocks.isConfirmedGone(minecraft.level, pos, state)) {
+                        gone.add(record.key());
+                    }
+                    continue;
+                }
+                BlockPos canonical = StorageIndex.canonicalPos(minecraft, pos);
+                IndexRecord previous = newestByStorage.get(canonical);
+                if (previous == null || previous.updatedAt() < record.updatedAt()) {
+                    newestByStorage.put(canonical, record);
+                    familyByStorage.put(canonical, family);
+                }
+                if (previous != null) {
+                    gone.add((previous.updatedAt() < record.updatedAt() ? previous : record).key());
+                }
+            }
+            for (Map.Entry<BlockPos, IndexRecord> entry : newestByStorage.entrySet()) {
+                BlockPos pos = entry.getKey();
+                IndexRecord record = entry.getValue();
+                String family = familyByStorage.get(pos);
+                if (!storageWithinSearchRadius(minecraft, playerX, playerZ, pos)) {
+                    continue;
+                }
+                boolean enderChest = StorageBlocks.isEnder(family);
+                if (enderChest && ender == null) {
+                    continue;
+                }
+                Map<String, Integer> contents = enderChest ? ender.counts() : record.counts();
+                Map<String, Integer> remembered = rememberedByStorage.computeIfAbsent(pos,
+                        ignored -> new LinkedHashMap<>());
+                Map<String, Integer> merged = itemsByStorage.computeIfAbsent(pos, ignored -> new LinkedHashMap<>());
+                contents.forEach((item, count) -> {
+                    remembered.merge(item, count, Math::max);
+                    merged.merge(item, count, Math::max);
+                });
+                freshnessByStorage.put(pos, IndexFreshness.classify(
+                        enderChest ? ender.updatedAt() : record.updatedAt(), now));
+            }
+            if (!gone.isEmpty()) {
+                index.removeRecords(gone);
+            }
+        }
+
+        Map<Integer, LinkedHashSet<BlockPos>> candidateSetsByColor = new LinkedHashMap<>();
         Map<Integer, Integer> itemCountsByColor = new LinkedHashMap<>();
+        for (SearchSelection.Query query : selection.active()) {
+            candidateSetsByColor.computeIfAbsent(query.color(), ignored -> new LinkedHashSet<>());
+        }
         for (Map.Entry<BlockPos, Map<String, Integer>> storage : itemsByStorage.entrySet()) {
             Set<Integer> colors = new LinkedHashSet<>();
-            Map<Integer, Integer> countsInStorage = new LinkedHashMap<>();
-            for (Map.Entry<String, Integer> selected : selection.entries().entrySet()) {
-                if (storage.getValue().containsKey(selected.getKey())) {
-                    colors.add(selected.getValue());
-                    countsInStorage.merge(selected.getValue(), storage.getValue().get(selected.getKey()), Math::max);
-                    candidateSetsByColor.computeIfAbsent(selected.getValue(), ignored -> new LinkedHashSet<>())
-                            .add(storage.getKey());
-                    IndexFreshness sourceFreshness = rememberedItemsByStorage
-                            .getOrDefault(storage.getKey(), Set.of()).contains(selected.getKey())
-                            ? latestFreshnessByStorage.getOrDefault(storage.getKey(), IndexFreshness.STALE)
-                            : IndexFreshness.FRAME_ONLY;
-                    latestFreshnessByColor.computeIfAbsent(selected.getValue(), ignored -> new HashMap<>())
-                            .merge(storage.getKey(), sourceFreshness, StorageLocator::preferFresher);
+            Map<String, Integer> remembered = rememberedByStorage.getOrDefault(storage.getKey(), Map.of());
+            for (SearchSelection.Query query : selection.active()) {
+                if (!query.matches(storage.getValue())) {
+                    continue;
                 }
+                int color = query.color();
+                colors.add(color);
+                itemCountsByColor.merge(color, query.countIn(storage.getValue()), ItemKeys::addCounts);
+                candidateSetsByColor.get(color).add(storage.getKey());
+                IndexFreshness sourceFreshness = query.matches(remembered)
+                        ? freshnessByStorage.getOrDefault(storage.getKey(), IndexFreshness.STALE)
+                        : IndexFreshness.FRAME_ONLY;
+                latestFreshnessByColor.computeIfAbsent(color, ignored -> new HashMap<>())
+                        .merge(storage.getKey(), sourceFreshness, StorageLocator::preferFresher);
             }
-            countsInStorage.forEach((color, count) -> itemCountsByColor.merge(color, count, Integer::sum));
             if (!colors.isEmpty()) {
-                for (BlockPos physical : StorageIndex.physicalBlocks(minecraft, storage.getKey())) {
-                    if (withinSearchRadius(playerX, playerZ, physical)) {
-                        matches.put(physical, List.copyOf(colors));
-                    }
+                markMatch(minecraft, storage.getKey(), colors, playerX, playerZ);
+            }
+        }
+
+        for (SearchSelection.Query query : selection.active()) {
+            if (query.kind() != SearchSelection.Kind.POSITION) {
+                continue;
+            }
+            int color = query.color();
+            if (!scope.equals(query.scope())) {
+                farTargets.put(color, new FarTarget(null, Double.NaN, true));
+                continue;
+            }
+            BlockPos pos = query.pos();
+            if (minecraft.level.hasChunk(pos.getX() >> 4, pos.getZ() >> 4) && isStorage(minecraft, pos)
+                    && storageWithinSearchRadius(minecraft, playerX, playerZ, pos)) {
+                BlockPos canonical = StorageIndex.canonicalPos(minecraft, pos);
+                candidateSetsByColor.get(color).add(canonical);
+                IndexRecord record = index.get(scope, canonical);
+                latestFreshnessByColor.computeIfAbsent(color, ignored -> new HashMap<>()).put(canonical,
+                        record == null ? IndexFreshness.FRAME_ONLY : IndexFreshness.classify(record.updatedAt(), now));
+                markMatch(minecraft, canonical, Set.of(color), playerX, playerZ);
+                farTargets.remove(color);
+            } else {
+                farTargets.put(color, new FarTarget(pos, horizontalDistance(playerX, playerZ, pos), false));
+            }
+        }
+
+        enderCounts.clear();
+        if (ender != null) {
+            for (SearchSelection.Query query : selection.active()) {
+                if (query.matches(ender.counts())) {
+                    enderCounts.put(query.color(), query.countIn(ender.counts()));
                 }
             }
         }
+        updateFarTargets(selection, index, scope, playerX, playerZ, candidateSetsByColor);
 
         latestItemCountsByColor.clear();
         latestItemCountsByColor.putAll(itemCountsByColor);
@@ -160,6 +245,83 @@ public final class StorageLocator {
         updateRoutes(minecraft, candidatesByColor);
     }
 
+    private void markMatch(Minecraft minecraft, BlockPos canonical, Set<Integer> colors,
+                           double playerX, double playerZ) {
+        for (BlockPos physical : StorageIndex.physicalBlocks(minecraft, canonical)) {
+            if (withinSearchRadius(playerX, playerZ, physical)) {
+                List<Integer> existing = matches.get(physical);
+                if (existing == null) {
+                    matches.put(physical, List.copyOf(colors));
+                } else {
+                    LinkedHashSet<Integer> merged = new LinkedHashSet<>(existing);
+                    merged.addAll(colors);
+                    matches.put(physical, List.copyOf(merged));
+                }
+            }
+        }
+    }
+
+    private void updateFarTargets(SearchSelection selection, StorageIndex index, String scope,
+                                  double playerX, double playerZ,
+                                  Map<Integer, LinkedHashSet<BlockPos>> candidates) {
+        List<SearchSelection.Query> missing = new ArrayList<>();
+        for (SearchSelection.Query query : selection.active()) {
+            if (query.kind() == SearchSelection.Kind.POSITION) {
+                continue;
+            }
+            if (candidates.get(query.color()).isEmpty()) {
+                missing.add(query);
+            } else {
+                farTargets.remove(query.color());
+            }
+        }
+        farTargets.keySet().removeIf(color -> !candidates.containsKey(color));
+        if (missing.isEmpty()) {
+            return;
+        }
+        boolean stale = selection.version() != farSelectionVersion || index.revision() != farIndexRevision
+                || !scope.equals(farScope) || refreshSerial - farRefreshSerial >= FAR_REFRESH_INTERVAL;
+        if (!stale && missing.stream().allMatch(query -> farTargets.containsKey(query.color()))) {
+            return;
+        }
+        farSelectionVersion = selection.version();
+        farIndexRevision = index.revision();
+        farRefreshSerial = refreshSerial;
+        farScope = scope;
+
+        Map<Integer, IndexRecord> nearest = new HashMap<>();
+        Map<Integer, Double> nearestDistance = new HashMap<>();
+        index.forEachInScope(scope, record -> {
+            if (record.counts().isEmpty()) {
+                return;
+            }
+            double distance = Double.NaN;
+            for (SearchSelection.Query query : missing) {
+                if (!query.matches(record.counts())) {
+                    continue;
+                }
+                if (Double.isNaN(distance)) {
+                    double dx = record.x() + 0.5 - playerX;
+                    double dz = record.z() + 0.5 - playerZ;
+                    distance = Math.sqrt(dx * dx + dz * dz);
+                }
+                if (distance < nearestDistance.getOrDefault(query.color(), Double.POSITIVE_INFINITY)) {
+                    nearestDistance.put(query.color(), distance);
+                    nearest.put(query.color(), record);
+                }
+            }
+        });
+        for (SearchSelection.Query query : missing) {
+            IndexRecord record = nearest.get(query.color());
+            if (record == null) {
+                farTargets.remove(query.color());
+            } else {
+                farTargets.put(query.color(), new FarTarget(StorageIndex.pos(record),
+                        nearestDistance.get(query.color()), false));
+            }
+        }
+    }
+
     public Map<BlockPos, List<Integer>> matches() {
         return matches;
     }
@@ -169,38 +331,46 @@ public final class StorageLocator {
     }
 
     public Map<Integer, QueryStats> queryStats() {
+        if (cachedStatsVersion == statsVersion) {
+            return cachedStats;
+        }
         Map<Integer, QueryStats> stats = new LinkedHashMap<>();
-        for (Map.Entry<Integer, List<BlockPos>> entry : latestCandidatesByColor.entrySet()) {
+        Set<Integer> colors = new LinkedHashSet<>(latestCandidatesByColor.keySet());
+        colors.addAll(farTargets.keySet());
+        colors.addAll(enderCounts.keySet());
+        for (Integer color : colors) {
+            List<BlockPos> candidates = latestCandidatesByColor.getOrDefault(color, List.of());
             int fresh = 0;
             int aging = 0;
             int stale = 0;
             int frames = 0;
-            for (BlockPos pos : entry.getValue()) {
-                switch (latestFreshnessByColor.getOrDefault(entry.getKey(), Map.of())
-                        .getOrDefault(pos, IndexFreshness.FRAME_ONLY)) {
+            Map<BlockPos, IndexFreshness> freshness = latestFreshnessByColor.getOrDefault(color, Map.of());
+            for (BlockPos pos : candidates) {
+                switch (freshness.getOrDefault(pos, IndexFreshness.FRAME_ONLY)) {
                     case FRESH -> fresh++;
                     case AGING -> aging++;
                     case STALE -> stale++;
                     case FRAME_ONLY -> frames++;
                 }
             }
-            List<Route> routes = routesByColor.getOrDefault(entry.getKey(), List.of());
+            List<Route> routes = routesByColor.getOrDefault(color, List.of());
             double routeDistance = routes.stream().mapToDouble(Route::length).min().orElse(Double.NaN);
-            stats.put(entry.getKey(), new QueryStats(entry.getValue().size(), routes.size(),
-                    routeJobs.containsKey(entry.getKey()), latestItemCountsByColor.getOrDefault(entry.getKey(), 0),
+            FarTarget far = farTargets.get(color);
+            stats.put(color, new QueryStats(candidates.size(), routes.size(),
+                    routeJobs.containsKey(color), latestItemCountsByColor.getOrDefault(color, 0),
                     fresh, aging, stale, frames,
-                    latestNearestDistanceByColor.getOrDefault(entry.getKey(), Double.NaN),
-                    routeDistance, routeFailures.get(entry.getKey())));
+                    latestNearestDistanceByColor.getOrDefault(color, Double.NaN),
+                    routeDistance, routeFailures.get(color),
+                    far == null ? null : far.pos(), far == null ? Double.NaN : far.distance(),
+                    far != null && far.otherWorld(), enderCounts.getOrDefault(color, -1)));
         }
-        return Map.copyOf(stats);
+        cachedStats = Map.copyOf(stats);
+        cachedStatsVersion = statsVersion;
+        return cachedStats;
     }
 
     public static boolean isStorage(Minecraft minecraft, BlockPos pos) {
-        if (minecraft.level == null) {
-            return false;
-        }
-        var block = minecraft.level.getBlockState(pos).getBlock();
-        return block instanceof ChestBlock || block instanceof BarrelBlock || block instanceof ShulkerBoxBlock;
+        return minecraft.level != null && StorageBlocks.isStorage(minecraft.level.getBlockState(pos));
     }
 
     private static IndexFreshness preferFresher(IndexFreshness first, IndexFreshness second) {
@@ -214,6 +384,12 @@ public final class StorageLocator {
             case STALE -> 2;
             case FRAME_ONLY -> 3;
         };
+    }
+
+    private static double horizontalDistance(double x, double z, BlockPos pos) {
+        double dx = pos.getX() + 0.5 - x;
+        double dz = pos.getZ() + 0.5 - z;
+        return Math.sqrt(dx * dx + dz * dz);
     }
 
     public static boolean withinSearchRadius(BlockPos center, BlockPos pos) {
@@ -237,6 +413,7 @@ public final class StorageLocator {
     }
 
     private void updateRoutes(Minecraft minecraft, Map<Integer, List<BlockPos>> candidatesByColor) {
+        statsVersion++;
         latestCandidatesByColor.clear();
         candidatesByColor.forEach((color, candidates) ->
                 latestCandidatesByColor.put(color, List.copyOf(candidates)));
@@ -286,7 +463,7 @@ public final class StorageLocator {
             }
             routeJobs.remove(color);
             if (!rebased.isEmpty() && rebased.size() == cached.size()
-                    && refreshSerial - rebased.getFirst().createdAtRefresh < ROUTE_REFRESH_INTERVAL) {
+                    && refreshSerial - rebased.getFirst().createdAtRefresh() < ROUTE_REFRESH_INTERVAL) {
                 continue;
             }
 
@@ -312,7 +489,10 @@ public final class StorageLocator {
     public void tickRoutes(Minecraft minecraft) {
         if (minecraft.level == null || minecraft.player == null
                 || !StorageFinderConfig.current().routeEnabled) {
-            routeJobs.clear();
+            if (!routeJobs.isEmpty()) {
+                routeJobs.clear();
+                statsVersion++;
+            }
             return;
         }
         BlockPos currentStart = RouteFinder.resolveStart(minecraft, minecraft.player.blockPosition());
@@ -386,7 +566,7 @@ public final class StorageLocator {
             }
         }
         for (List<Route> routes : routesByColor.values()) {
-            if (!routes.isEmpty() && !routes.getFirst().start.equals(currentStart)) {
+            if (!routes.isEmpty() && !routes.getFirst().start().equals(currentStart)) {
                 return true;
             }
         }
@@ -408,10 +588,12 @@ public final class StorageLocator {
         List<Route> displayed = routesByColor.get(color);
         if (!job.replacing || displayed == null || job.found.size() >= displayed.size()) {
             routesByColor.put(color, List.copyOf(job.found));
+            statsVersion++;
         }
     }
 
     private void finishRouteJob(int color, RouteJob job) {
+        statsVersion++;
         routeJobs.remove(color);
         List<Route> displayed = routesByColor.getOrDefault(color, List.of());
         if (job.found.isEmpty() && job.replacing && !displayed.isEmpty()) {
@@ -441,7 +623,7 @@ public final class StorageLocator {
             return;
         }
         if (candidates > 0 && routes == 0) {
-            StorageFinderClient.LOGGER.warn("No reachable route for color #{}, candidates={}",
+            StorageFinderClient.LOGGER.debug("No reachable route for color #{} to {} candidates",
                     String.format("%06X", color & 0xFFFFFF), candidates);
         } else {
             StorageFinderClient.LOGGER.debug("Route state for color #{}: candidates={}, routes={}",
@@ -450,20 +632,29 @@ public final class StorageLocator {
     }
 
     private List<Route> rebaseCachedRoutes(Minecraft minecraft, List<Route> cached,
-                                            Set<BlockPos> candidates, BlockPos start) {
+                                           Set<BlockPos> candidates, BlockPos start) {
         List<Route> rebased = new ArrayList<>(cached.size());
         for (Route route : cached) {
-            if (!candidates.contains(route.target)) {
+            if (!candidates.contains(route.target())) {
                 continue;
             }
-            List<BlockPos> remainingPath = trimToStart(minecraft, route.path, start);
-            if (remainingPath == null || !RouteFinder.isRouteValid(minecraft, route.target, remainingPath)) {
+            List<BlockPos> remainingPath = trimToStart(minecraft, route.path(), start);
+            if (remainingPath == null) {
                 continue;
             }
-            List<Vec3> renderPoints = remainingPath.equals(route.path)
-                    ? route.renderPoints : buildRenderPoints(minecraft, remainingPath);
-            rebased.add(new Route(start.immutable(), route.target, remainingPath,
-                    renderPoints, route.createdAtRefresh, RouteFinder.pathLength(remainingPath)));
+            boolean full = refreshSerial - route.validatedAtRefresh() >= FULL_VALIDATION_INTERVAL;
+            boolean valid = full
+                    ? RouteFinder.isRouteValid(minecraft, route.target(), remainingPath)
+                    : RouteFinder.isPathValid(minecraft, remainingPath.subList(0,
+                    Math.min(remainingPath.size(), PREFIX_VALIDATION_NODES)));
+            if (!valid) {
+                continue;
+            }
+            List<Vec3> renderPoints = remainingPath.equals(route.path())
+                    ? route.renderPoints() : buildRenderPoints(minecraft, remainingPath);
+            rebased.add(new Route(start.immutable(), route.target(), remainingPath,
+                    renderPoints, route.createdAtRefresh(), RouteFinder.pathLength(remainingPath),
+                    full ? refreshSerial : route.validatedAtRefresh()));
         }
         return List.copyOf(rebased);
     }
@@ -491,7 +682,7 @@ public final class StorageLocator {
         List<BlockPos> immutablePath = List.copyOf(path);
         return new Route(immutablePath.getFirst(), target.immutable(), immutablePath,
                 buildRenderPoints(minecraft, immutablePath), refreshSerial,
-                RouteFinder.pathLength(immutablePath));
+                RouteFinder.pathLength(immutablePath), refreshSerial);
     }
 
     private static List<Vec3> buildRenderPoints(Minecraft minecraft, List<BlockPos> path) {
@@ -533,18 +724,27 @@ public final class StorageLocator {
     }
 
     public record Route(BlockPos start, BlockPos target, List<BlockPos> path,
-                        List<Vec3> renderPoints, long createdAtRefresh, double length) {
+                        List<Vec3> renderPoints, long createdAtRefresh, double length,
+                        long validatedAtRefresh) {
         private Route refreshedAt(long serial) {
-            return new Route(start, target, path, renderPoints, serial, length);
+            return new Route(start, target, path, renderPoints, serial, length, validatedAtRefresh);
         }
     }
 
     public record QueryStats(int matches, int routes, boolean searching, int itemCount,
                              int fresh, int aging, int stale, int frameOnly,
                              double nearestDistance, double routeDistance,
-                             RouteFinder.FailureReason failureReason) {
+                             RouteFinder.FailureReason failureReason,
+                             BlockPos farTarget, double farDistance, boolean otherWorld, int enderCount) {
         public static final QueryStats EMPTY = new QueryStats(
-                0, 0, false, 0, 0, 0, 0, 0, Double.NaN, Double.NaN, null);
+                0, 0, false, 0, 0, 0, 0, 0, Double.NaN, Double.NaN, null, null, Double.NaN, false, -1);
+
+        public boolean inEnderChest() {
+            return enderCount >= 0;
+        }
+    }
+
+    private record FarTarget(BlockPos pos, double distance, boolean otherWorld) {
     }
 
     private static final class RouteJob {

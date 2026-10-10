@@ -4,6 +4,7 @@ import com.mojang.blaze3d.platform.InputConstants;
 import net.minecraft.client.Minecraft;
 import net.minecraft.client.gui.Font;
 import net.minecraft.client.gui.GuiGraphicsExtractor;
+import net.minecraft.core.BlockPos;
 import net.minecraft.network.chat.Component;
 import net.minecraft.world.item.ItemStack;
 import net.minecraft.world.item.Items;
@@ -61,9 +62,9 @@ public final class StorageHudRenderer {
 
         List<Row> rows = new ArrayList<>(queries.size());
         for (SearchSelection.Query query : queries) {
-            rows.add(new Row(query.stack(), query.displayName(), query.color(),
-                    stats.getOrDefault(query.color(), StorageLocator.QueryStats.EMPTY),
-                    priceMode ? priceComponent(query) : null));
+            StorageLocator.QueryStats queryStats = stats.getOrDefault(query.color(), StorageLocator.QueryStats.EMPTY);
+            rows.add(new Row(query.stack(), query.displayName(), query.color(), queryStats,
+                    priceMode ? priceComponent(query) : null, compassAngle(minecraft, queryStats)));
         }
         int screenWidth = minecraft.getWindow().getGuiScaledWidth();
         int screenHeight = minecraft.getWindow().getGuiScaledHeight();
@@ -137,12 +138,17 @@ public final class StorageHudRenderer {
                                     Row row, int x, int rowY, int panelWidth, boolean priceMode) {
         graphics.item(row.stack(), x + 6, rowY + (priceMode ? 8 : 3));
         String distance = distanceText(config, row.stats());
-        int distanceWidth = distance == null ? 0 : font.width(distance) + 6;
+        int distanceWidth = distance == null ? 0
+                : font.width(distance) + (Double.isFinite(row.compassAngle()) ? 18 : 6);
         int textWidth = panelWidth - TEXT_LEFT - 6;
         String name = trimToWidth(font, row.name().getString(), textWidth - distanceWidth);
         graphics.text(font, name, x + TEXT_LEFT, rowY + 3, TEXT, true);
         if (distance != null) {
-            graphics.text(font, distance, x + panelWidth - 6 - font.width(distance), rowY + 3, MUTED, true);
+            int distanceX = x + panelWidth - 6 - font.width(distance);
+            graphics.text(font, distance, distanceX, rowY + 3, MUTED, true);
+            if (Double.isFinite(row.compassAngle())) {
+                drawArrow(graphics, distanceX - 8, rowY + 7, row.compassAngle(), row.color());
+            }
         }
         Status status = status(config, row.stats());
         graphics.text(font, trimToWidth(font, status.text().getString(), textWidth),
@@ -163,6 +169,40 @@ public final class StorageHudRenderer {
         String name = trimToWidth(font, row.name().getString(), textWidth - statusWidth - 6);
         graphics.text(font, name, x + TEXT_LEFT, rowY + 5, TEXT, true);
         graphics.text(font, statusText, x + panelWidth - 6 - statusWidth, rowY + 5, status.color(), true);
+        if (Double.isFinite(row.compassAngle())) {
+            drawArrow(graphics, x + panelWidth - 6 - statusWidth - 8, rowY + 9, row.compassAngle(), row.color());
+        }
+    }
+
+    private static void drawArrow(GuiGraphicsExtractor graphics, int centerX, int centerY, double degrees, int color) {
+        int arrowColor = 0xFF000000 | color;
+        graphics.pose().pushMatrix();
+        graphics.pose().translate(centerX, centerY);
+        graphics.pose().rotate((float) Math.toRadians(degrees));
+        graphics.fill(-1, -1, 1, 5, arrowColor);
+        for (int row = 0; row < 4; row++) {
+            graphics.fill(-row - 1, -5 + row, row + 1, -4 + row, arrowColor);
+        }
+        graphics.pose().popMatrix();
+    }
+
+    private static double compassAngle(Minecraft minecraft, StorageLocator.QueryStats stats) {
+        if (stats.matches() > 0 || stats.farTarget() == null || minecraft.player == null) {
+            return Double.NaN;
+        }
+        double bearing = CompassMath.bearingDegrees(stats.farTarget().getX() + 0.5 - minecraft.player.getX(),
+                stats.farTarget().getZ() + 0.5 - minecraft.player.getZ());
+        return CompassMath.relativeDegrees(bearing, minecraft.player.getYRot());
+    }
+
+    private static Component direction(BlockPos target) {
+        Minecraft minecraft = Minecraft.getInstance();
+        if (minecraft.player == null) {
+            return Component.empty();
+        }
+        double bearing = CompassMath.bearingDegrees(target.getX() + 0.5 - minecraft.player.getX(),
+                target.getZ() + 0.5 - minecraft.player.getZ());
+        return Component.translatable("storagefinder.compass." + CompassMath.sectorKey(bearing));
     }
 
     private static int panelWidth(StorageFinderConfig config, boolean priceMode) {
@@ -184,14 +224,18 @@ public final class StorageHudRenderer {
         ItemStack logs = new ItemStack(Items.OAK_LOG);
         return List.of(
                 new Row(diamond, diamond.getHoverName(), 0xFF40C4FF,
-                        new StorageLocator.QueryStats(2, 2, false, 64, 2, 0, 0, 0, 18.0, 24.0, null), null),
+                        new StorageLocator.QueryStats(2, 2, false, 64, 2, 0, 0, 0, 18.0, 24.0, null,
+                                null, Double.NaN, false, -1), null, Double.NaN),
                 new Row(logs, logs.getHoverName(), 0xFFFFD740,
-                        new StorageLocator.QueryStats(1, 0, true, 12, 0, 1, 0, 0, 41.0, Double.NaN, null), null));
+                        new StorageLocator.QueryStats(1, 0, true, 12, 0, 1, 0, 0, 41.0, Double.NaN, null,
+                                null, Double.NaN, false, -1), null, Double.NaN));
     }
 
     private static Component priceComponent(SearchSelection.Query query) {
-        Optional<EconomyPriceBridge.PriceSummary> summary =
-                EconomyPriceBridge.lookup(SearchSelection.itemIds(query.stack()));
+        if (query.priceKeys().isEmpty()) {
+            return Component.translatable("storagefinder.hud.economy_no_data");
+        }
+        Optional<EconomyPriceBridge.PriceSummary> summary = EconomyPriceBridge.lookup(query.priceKeys());
         if (summary.isEmpty()) {
             return Component.translatable("storagefinder.hud.economy_no_data");
         }
@@ -202,8 +246,14 @@ public final class StorageHudRenderer {
     }
 
     private static String distanceText(StorageFinderConfig config, StorageLocator.QueryStats stats) {
-        if (!config.hudShowDistance || stats.matches() == 0) {
+        if (!config.hudShowDistance) {
             return null;
+        }
+        if (stats.matches() == 0) {
+            return stats.farTarget() != null && Double.isFinite(stats.farDistance())
+                    ? Component.translatable("storagefinder.hud.far_distance",
+                    Math.round(stats.farDistance())).getString()
+                    : null;
         }
         double distance = Double.isFinite(stats.routeDistance()) ? stats.routeDistance() : stats.nearestDistance();
         if (!Double.isFinite(distance)) {
@@ -214,7 +264,7 @@ public final class StorageHudRenderer {
 
     private static Status status(StorageFinderConfig config, StorageLocator.QueryStats stats) {
         if (stats.matches() == 0) {
-            return new Status(Component.translatable("storagefinder.hud.none"), MUTED);
+            return withEnder(missingStatus(stats), stats);
         }
         Component amount = stats.itemCount() > 0
                 ? Component.translatable("storagefinder.hud.amount", stats.itemCount(), stats.matches())
@@ -243,12 +293,39 @@ public final class StorageHudRenderer {
             text = text.copy().append(Component.translatable(
                     "storagefinder.hud.data_quality", old, stats.frameOnly()));
         }
-        return new Status(text, color);
+        return withEnder(new Status(text, color), stats);
+    }
+
+    private static Status missingStatus(StorageLocator.QueryStats stats) {
+        if (stats.otherWorld()) {
+            return new Status(Component.translatable("storagefinder.hud.other_world"), MUTED);
+        }
+        if (stats.farTarget() != null) {
+            return new Status(Component.translatable("storagefinder.hud.far", direction(stats.farTarget())), WORKING);
+        }
+        return new Status(Component.translatable("storagefinder.hud.none"), MUTED);
+    }
+
+    private static Status withEnder(Status status, StorageLocator.QueryStats stats) {
+        if (!stats.inEnderChest()) {
+            return status;
+        }
+        Component ender = stats.enderCount() > 0
+                ? Component.translatable("storagefinder.hud.ender", stats.enderCount())
+                : Component.translatable("storagefinder.hud.ender_present");
+        return new Status(status.text().copy().append(ender), status.color());
     }
 
     private static Status compactStatus(StorageFinderConfig config, StorageLocator.QueryStats stats) {
         if (stats.matches() == 0) {
-            return new Status(Component.translatable("storagefinder.hud.none"), MUTED);
+            String far = distanceText(config, stats);
+            if (far != null) {
+                return new Status(Component.literal(far), WORKING);
+            }
+            if (stats.inEnderChest()) {
+                return new Status(Component.translatable("storagefinder.hud.short.ender"), READY);
+            }
+            return missingStatus(stats);
         }
         String distance = distanceText(config, stats);
         if (config.routeEnabled && stats.routes() == 0) {
@@ -294,7 +371,7 @@ public final class StorageHudRenderer {
     }
 
     private record Row(ItemStack stack, Component name, int color,
-                       StorageLocator.QueryStats stats, Component price) {
+                       StorageLocator.QueryStats stats, Component price, double compassAngle) {
     }
 
     private record Status(Component text, int color) {

@@ -1,3 +1,4 @@
+import groovy.json.JsonOutput
 import groovy.json.JsonSlurper
 
 plugins {
@@ -24,6 +25,16 @@ repositories {
 
 loom {
     splitEnvironmentSourceSets()
+}
+
+sourceSets {
+    macro {
+        compileClasspath += sourceSets.main.output + sourceSets.client.output + sourceSets.client.compileClasspath
+        runtimeClasspath += sourceSets.main.output + sourceSets.client.output + sourceSets.client.runtimeClasspath
+    }
+}
+
+loom {
     mods {
         "storagefinder" { sourceSet sourceSets.client }
     }
@@ -67,17 +78,81 @@ tasks.withType(Jar).configureEach {
     }
 }
 
+def macroClasses = "org/lts/storagefinder/macro/**"
+
+jar {
+    doLast {
+        def leaked = zipTree(archiveFile.get().asFile).matching {
+            include macroClasses
+            include "storagefinder.macro.mixins.json"
+        }.files
+        if (!leaked.isEmpty()) {
+            throw new GradleException("Macro classes leaked into the standard jar: ${leaked*.name}")
+        }
+    }
+}
+
+def macroModJson = tasks.register("macroModJson") {
+    def source = file("src/client/resources/fabric.mod.json")
+    def target = layout.buildDirectory.file("generated/macro/fabric.mod.json")
+    inputs.file source
+    inputs.property "version", modVersion
+    outputs.file target
+    doLast {
+        def json = new JsonSlurper().parse(source)
+        json.version = modVersion
+        json.name = "Storage Finder (macro)"
+        json.description = json.description + " Macro edition: reads nearby storage while you walk past, without opening a screen."
+        json.entrypoints.client = json.entrypoints.client + ["org.lts.storagefinder.macro.AutoPeekClient"]
+        json.mixins = json.mixins + [[config: "storagefinder.macro.mixins.json", environment: "client"]]
+        def out = target.get().asFile
+        out.parentFile.mkdirs()
+        out.setText(JsonOutput.prettyPrint(JsonOutput.toJson(json)), "UTF-8")
+    }
+}
+
+def macroJar = tasks.register("macroJar", Zip) {
+    group = "build"
+    description = "Builds the macro edition that reads nearby storage without opening a screen."
+    dependsOn tasks.named("jar"), tasks.named("macroClasses"), macroModJson
+    archiveBaseName = project.archives_base_name
+    archiveVersion = modVersion
+    archiveClassifier = "macro"
+    archiveExtension = "jar"
+    destinationDirectory = tasks.named("jar", Jar).flatMap { it.destinationDirectory }
+    preserveFileTimestamps = false
+    reproducibleFileOrder = true
+    from(zipTree(tasks.named("jar", Jar).flatMap { it.archiveFile })) {
+        exclude "fabric.mod.json"
+    }
+    from(sourceSets.macro.output)
+    from(macroModJson)
+    doLast {
+        def included = zipTree(archiveFile.get().asFile).matching { include macroClasses }.files
+        if (included.isEmpty()) {
+            throw new GradleException("Macro classes are missing from the macro jar")
+        }
+    }
+}
+
+tasks.named("assemble") {
+    dependsOn macroJar
+}
+
 tasks.register("verifyProjectMetadata") {
     group = "verification"
     description = "Checks localization parity and release metadata consistency."
     doLast {
         def slurper = new JsonSlurper()
-        def languageDir = file("src/client/resources/assets/storagefinder/lang")
-        def englishKeys = slurper.parse(file("${languageDir}/en_us.json")).keySet()
-        fileTree(languageDir).matching { include "*.json" }.files.each { languageFile ->
-            def keys = slurper.parse(languageFile).keySet()
-            if (keys != englishKeys) {
-                throw new GradleException("Localization keys differ in ${languageFile.name}")
+        ["src/client/resources/assets/storagefinder/lang",
+         "src/macro/resources/assets/storagefinder_macro/lang"].each { path ->
+            def languageDir = file(path)
+            def englishKeys = slurper.parse(file("${languageDir}/en_us.json")).keySet()
+            fileTree(languageDir).matching { include "*.json" }.files.each { languageFile ->
+                def keys = slurper.parse(languageFile).keySet()
+                if (keys != englishKeys) {
+                    throw new GradleException("Localization keys differ in ${path}/${languageFile.name}")
+                }
             }
         }
 

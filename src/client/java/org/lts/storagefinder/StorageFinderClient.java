@@ -5,6 +5,7 @@ import net.fabricmc.api.ClientModInitializer;
 import net.fabricmc.fabric.api.client.event.lifecycle.v1.ClientTickEvents;
 import net.fabricmc.fabric.api.client.event.lifecycle.v1.ClientLifecycleEvents;
 import net.fabricmc.fabric.api.client.keymapping.v1.KeyMappingHelper;
+import net.fabricmc.fabric.api.client.rendering.v1.ClientTooltipComponentCallback;
 import net.fabricmc.fabric.api.client.rendering.v1.level.LevelRenderEvents;
 import net.fabricmc.fabric.api.client.rendering.v1.hud.HudElementRegistry;
 import net.minecraft.client.KeyMapping;
@@ -12,28 +13,36 @@ import net.minecraft.client.Minecraft;
 import net.minecraft.client.gui.screens.inventory.AbstractContainerScreen;
 import net.minecraft.client.multiplayer.ClientLevel;
 import net.minecraft.core.BlockPos;
+import net.minecraft.core.registries.BuiltInRegistries;
 import net.minecraft.network.chat.Component;
 import net.minecraft.resources.Identifier;
 import net.minecraft.world.inventory.AbstractContainerMenu;
 import net.minecraft.world.inventory.ChestMenu;
 import net.minecraft.world.inventory.ShulkerBoxMenu;
 import net.minecraft.world.item.ItemStack;
+import net.minecraft.world.item.Items;
 import net.minecraft.world.level.block.BarrelBlock;
 import net.minecraft.world.level.block.ChestBlock;
+import net.minecraft.world.level.block.EnderChestBlock;
 import net.minecraft.world.level.block.ShulkerBoxBlock;
 import net.minecraft.world.level.block.state.BlockState;
 import net.minecraft.world.level.block.state.properties.ChestType;
 import org.lts.storagefinder.gui.StorageSearchScreen;
+import org.lts.storagefinder.tooltip.ClientContainerPreviewTooltip;
+import org.lts.storagefinder.tooltip.ContainerPreviewTooltip;
 
+import java.util.ArrayList;
+import java.util.Comparator;
+import java.util.LinkedHashMap;
 import java.util.LinkedHashSet;
+import java.util.List;
+import java.util.Map;
 import java.util.Set;
 import java.util.function.Consumer;
-import org.slf4j.Logger;
-import org.slf4j.LoggerFactory;
 
 public final class StorageFinderClient implements ClientModInitializer {
     public static final String MOD_ID = "storagefinder";
-    public static final Logger LOGGER = LoggerFactory.getLogger(MOD_ID);
+    public static final ModLog LOGGER = ModLog.root();
     private static final KeyMapping.Category KEY_CATEGORY = KeyMapping.Category.register(
             Identifier.fromNamespaceAndPath(MOD_ID, "main"));
     private static final SearchSelection SELECTION = new SearchSelection();
@@ -50,7 +59,12 @@ public final class StorageFinderClient implements ClientModInitializer {
     private static int activeStorageSlots;
     private static BlockPos activeStorage;
     private static String activeScope;
+    private static String activeFamily;
+    private static String activeEnderScope;
+    private static int activeFingerprint;
     private static boolean activeContentsChanged;
+    private static Map<String, Integer> completionBaseline = Map.of();
+    private static Set<Integer> completionColors = Set.of();
     private static ClientLevel lastLevel;
     private static KeyMapping searchKey;
     private static int ticks;
@@ -71,7 +85,10 @@ public final class StorageFinderClient implements ClientModInitializer {
         HudElementRegistry.addLast(
                 Identifier.fromNamespaceAndPath(MOD_ID, "active_searches"),
                 (graphics, frame) -> StorageHudRenderer.render(Minecraft.getInstance(), graphics));
-        LOGGER.info("Storage Finder initialized");
+        ClientTooltipComponentCallback.EVENT.register(component ->
+                component instanceof ContainerPreviewTooltip preview
+                        ? new ClientContainerPreviewTooltip(preview) : null);
+        LOGGER.ready();
     }
 
     public static void onStorageInteracted(BlockPos pos) {
@@ -101,7 +118,7 @@ public final class StorageFinderClient implements ClientModInitializer {
         handleSearchKey(minecraft);
         if (config.enabled && config.indexContainers) {
             observeContainer(minecraft);
-        } else {
+        } else if (pendingStorage != null || activeStorageMenu != null) {
             clearPendingStorage();
             saveAndClearActiveContainer(minecraft);
         }
@@ -135,15 +152,9 @@ public final class StorageFinderClient implements ClientModInitializer {
             } else {
                 Component displayName = SearchSelection.displayName(held);
                 SearchSelection.Change change = SELECTION.toggle(held, displayName);
-                LOGGER.info("Held search {} {} as {}", change.added() ? "selected" : "removed",
+                LOGGER.debug("Held search {} {} as {}", change.added() ? "selected" : "removed",
                         displayName.getString(), SearchSelection.itemIds(held));
-                if (config.showMessages && change.added()) {
-                    minecraft.player.sendOverlayMessage(Component.translatable(
-                            "storagefinder.selected.added", displayName, String.format("%06X", change.color() & 0xFFFFFF)));
-                } else if (config.showMessages) {
-                    minecraft.player.sendOverlayMessage(Component.translatable(
-                            "storagefinder.selected.removed", displayName));
-                }
+                announceToggle(minecraft, change, displayName);
                 LOCATOR.refresh(minecraft, SELECTION, INDEX);
             }
         }
@@ -156,9 +167,7 @@ public final class StorageFinderClient implements ClientModInitializer {
         }
 
         AbstractContainerMenu openedMenu = null;
-        if (MinecraftScreenAccess.getScreen(minecraft) instanceof AbstractContainerScreen<?> screen && screen.getMenu() instanceof ChestMenu chestMenu) {
-            openedMenu = chestMenu;
-        } else if (MinecraftScreenAccess.getScreen(minecraft) instanceof AbstractContainerScreen<?> screen) {
+        if (MinecraftScreenAccess.getScreen(minecraft) instanceof AbstractContainerScreen<?> screen) {
             openedMenu = screen.getMenu();
         }
 
@@ -178,19 +187,36 @@ public final class StorageFinderClient implements ClientModInitializer {
                 activeStorageSlots = storageSlots;
                 activeStorage = StorageIndex.canonicalPos(minecraft, interactedStorage);
                 activeScope = ScopeUtil.current(minecraft);
-                StorageIndex.UpdateResult result = INDEX.update(
-                        activeScope, activeStorage, activeStorageMenu, activeStorageSlots);
-                dismissSearchesForStorage(minecraft, activeScope, activeStorage);
+                activeFamily = StorageBlocks.family(minecraft.level.getBlockState(activeStorage));
+                activeEnderScope = StorageBlocks.isEnder(activeFamily) ? ScopeUtil.ender(minecraft) : null;
+                activeFingerprint = StorageContents.fingerprint(activeStorageMenu, activeStorageSlots);
+                Map<String, Integer> contents = StorageContents.collect(activeStorageMenu, activeStorageSlots);
+                StorageIndex.UpdateResult result = recordActive(minecraft, contents);
+                beginCompletion(minecraft, contents);
                 if (minecraft.player != null && StorageFinderConfig.current().showMessages) {
                     minecraft.player.sendOverlayMessage(indexMessage(result));
                 }
                 LOCATOR.refresh(minecraft, SELECTION, INDEX);
             }
         } else if (activeStorageMenu != null && openedMenu == activeStorageMenu) {
-            StorageIndex.UpdateResult result = INDEX.update(
-                    activeScope, activeStorage, activeStorageMenu, activeStorageSlots);
-            activeContentsChanged |= result.kind() == StorageIndex.UpdateKind.UPDATED;
+            int fingerprint = StorageContents.fingerprint(activeStorageMenu, activeStorageSlots);
+            if (fingerprint != activeFingerprint) {
+                activeFingerprint = fingerprint;
+                StorageIndex.UpdateResult result = recordActive(minecraft,
+                        StorageContents.collect(activeStorageMenu, activeStorageSlots));
+                activeContentsChanged |= result.kind() == StorageIndex.UpdateKind.UPDATED;
+            }
         }
+    }
+
+    private static StorageIndex.UpdateResult recordActive(Minecraft minecraft, Map<String, Integer> contents) {
+        if (activeEnderScope != null) {
+            INDEX.update(activeScope, activeStorage, List.of(activeStorage), StorageBlocks.ENDER_CHEST, Map.of());
+            return INDEX.update(activeEnderScope, BlockPos.ZERO, List.of(BlockPos.ZERO),
+                    StorageBlocks.ENDER_CONTENTS, contents);
+        }
+        return INDEX.update(activeScope, activeStorage, StorageIndex.physicalBlocks(minecraft, activeStorage),
+                activeFamily, contents);
     }
 
     private static int storageSlotCount(Minecraft minecraft, BlockPos storage,
@@ -206,7 +232,7 @@ public final class StorageFinderClient implements ClientModInitializer {
             int expected = single ? SINGLE_CONTAINER_SLOTS : DOUBLE_CHEST_SLOTS;
             return chestMenu.getContainer().getContainerSize() == expected ? expected : 0;
         }
-        if (block instanceof BarrelBlock && menu instanceof ChestMenu chestMenu) {
+        if ((block instanceof BarrelBlock || block instanceof EnderChestBlock) && menu instanceof ChestMenu chestMenu) {
             return chestMenu.getContainer().getContainerSize() == SINGLE_CONTAINER_SLOTS
                     ? SINGLE_CONTAINER_SLOTS : 0;
         }
@@ -220,16 +246,17 @@ public final class StorageFinderClient implements ClientModInitializer {
     private static void onClientStopping(Minecraft minecraft) {
         saveAndClearActiveContainer(minecraft);
         if (!INDEX.flushBlocking()) {
-            LOGGER.warn("Storage index could not be saved while the client was stopping");
+            LOGGER.warn("Could not save the storage index while the client was stopping; recent changes are lost");
         }
     }
 
     private static void saveAndClearActiveContainer(Minecraft minecraft) {
         if (activeStorageMenu != null && activeStorage != null && activeScope != null) {
-            StorageIndex.UpdateResult result = INDEX.update(
-                    activeScope, activeStorage, activeStorageMenu, activeStorageSlots);
+            StorageIndex.UpdateResult result = recordActive(minecraft,
+                    StorageContents.collect(activeStorageMenu, activeStorageSlots));
             activeContentsChanged |= result.kind() == StorageIndex.UpdateKind.UPDATED;
             boolean persisted = INDEX.flush();
+            finishCompletion(minecraft, activeStorageMenu);
             if (activeContentsChanged && minecraft.player != null && StorageFinderConfig.current().showMessages) {
                 minecraft.player.sendOverlayMessage(persisted
                         ? Component.translatable("storagefinder.index.changed_on_close", result.itemTypes())
@@ -241,14 +268,100 @@ public final class StorageFinderClient implements ClientModInitializer {
         activeStorageSlots = 0;
         activeStorage = null;
         activeScope = null;
+        activeFamily = null;
+        activeEnderScope = null;
+        activeFingerprint = 0;
         activeContentsChanged = false;
+        completionBaseline = Map.of();
+        completionColors = Set.of();
         INDEX.flush();
+    }
+
+    private static void beginCompletion(Minecraft minecraft, Map<String, Integer> contents) {
+        String mode = StorageFinderConfig.current().searchCompletion;
+        completionBaseline = Map.of();
+        completionColors = Set.of();
+        if (StorageFinderConfig.COMPLETE_NEVER.equals(mode) || minecraft.player == null) {
+            return;
+        }
+        Set<Integer> reached = new LinkedHashSet<>();
+        Set<Integer> containing = new LinkedHashSet<>();
+        Set<BlockPos> physical = new LinkedHashSet<>(StorageIndex.physicalBlocks(minecraft, activeStorage));
+        for (SearchSelection.Query query : SELECTION.active()) {
+            if (query.kind() == SearchSelection.Kind.POSITION) {
+                if (activeScope.equals(query.scope()) && physical.contains(query.pos())) {
+                    reached.add(query.color());
+                }
+            } else if (query.matches(contents)) {
+                containing.add(query.color());
+            }
+        }
+        if (StorageFinderConfig.COMPLETE_ON_OPEN.equals(mode)) {
+            reached.addAll(containing);
+        } else if (!containing.isEmpty()) {
+            completionColors = Set.copyOf(containing);
+            completionBaseline = StorageContents.collect(minecraft.player.getInventory(),
+                    activeStorageMenu.getCarried());
+        }
+        completeSearches(minecraft, reached);
+    }
+
+    private static void finishCompletion(Minecraft minecraft, AbstractContainerMenu menu) {
+        if (completionColors.isEmpty() || minecraft.player == null) {
+            return;
+        }
+        Map<String, Integer> now = StorageContents.collect(minecraft.player.getInventory(), menu.getCarried());
+        Set<Integer> taken = new LinkedHashSet<>();
+        for (SearchSelection.Query query : SELECTION.active()) {
+            if (completionColors.contains(query.color())
+                    && query.countIn(now) > query.countIn(completionBaseline)) {
+                taken.add(query.color());
+            }
+        }
+        completeSearches(minecraft, taken);
+    }
+
+    private static void completeSearches(Minecraft minecraft, Set<Integer> colors) {
+        if (colors.isEmpty()) {
+            return;
+        }
+        int removed = SELECTION.removeColors(colors);
+        if (removed > 0 && minecraft.player != null && StorageFinderConfig.current().showMessages) {
+            minecraft.player.sendOverlayMessage(Component.translatable("storagefinder.selected.completed", removed));
+        }
     }
 
     private static void clearPendingStorage() {
         pendingStorage = null;
         pendingStorageAt = 0L;
         pendingStorageLevel = null;
+    }
+
+    public static long lastIndexedAt(Minecraft minecraft, BlockPos canonical) {
+        IndexRecord record = INDEX.get(ScopeUtil.current(minecraft), canonical);
+        return record == null ? -1L : record.updatedAt();
+    }
+
+    public static boolean recordWithoutScreen(Minecraft minecraft, BlockPos interacted, AbstractContainerMenu menu) {
+        StorageFinderConfig config = StorageFinderConfig.current();
+        if (!config.enabled || !config.indexContainers || minecraft.level == null) {
+            return false;
+        }
+        if (interacted.equals(pendingStorage)) {
+            clearPendingStorage();
+        }
+        int storageSlots = storageSlotCount(minecraft, interacted, menu);
+        if (storageSlots <= 0) {
+            return false;
+        }
+        BlockPos canonical = StorageIndex.canonicalPos(minecraft, interacted);
+        String family = StorageBlocks.family(minecraft.level.getBlockState(canonical));
+        if (family == null || StorageBlocks.isEnder(family)) {
+            return false;
+        }
+        INDEX.update(ScopeUtil.current(minecraft), canonical, StorageIndex.physicalBlocks(minecraft, canonical),
+                family, StorageContents.collect(menu, storageSlots));
+        return true;
     }
 
     public static void onContainerScreenRemoved(AbstractContainerMenu menu) {
@@ -268,15 +381,79 @@ public final class StorageFinderClient implements ClientModInitializer {
     public static void selectFromSearch(ItemStack stack, Component displayName) {
         Minecraft minecraft = Minecraft.getInstance();
         SearchSelection.Change change = SELECTION.toggle(stack, displayName);
-        LOGGER.info("Text search {} {} as {}", change.added() ? "selected" : "removed",
+        LOGGER.debug("Text search {} {} as {}", change.added() ? "selected" : "removed",
                 displayName.getString(), SearchSelection.itemIds(stack));
+        announceToggle(minecraft, change, displayName);
+        LOCATOR.refresh(minecraft, SELECTION, INDEX);
+    }
+
+    public static void selectGroup(String needle, ItemStack icon, Component displayName, Set<String> keys,
+                                   boolean matchCustomNames) {
+        Minecraft minecraft = Minecraft.getInstance();
+        SearchSelection.Change change = SELECTION.toggleGroup(needle, icon, displayName, keys, matchCustomNames);
+        LOGGER.debug("Group search {} {} with {} item keys", change.added() ? "selected" : "removed",
+                needle, keys.size());
         if (minecraft.player != null && StorageFinderConfig.current().showMessages) {
             minecraft.player.sendOverlayMessage(change.added()
-                    ? Component.translatable("storagefinder.selected.added", displayName,
-                            String.format("%06X", change.color() & 0xFFFFFF))
+                    ? Component.translatable("storagefinder.selected.group_added", displayName, keys.size(),
+                    String.format("%06X", change.color() & 0xFFFFFF))
                     : Component.translatable("storagefinder.selected.removed", displayName));
         }
         LOCATOR.refresh(minecraft, SELECTION, INDEX);
+    }
+
+    public static Integer groupColor(String needle) {
+        return SELECTION.groupColor(needle);
+    }
+
+    public static boolean routeToRecord(StorageIndex.RecordView record) {
+        Minecraft minecraft = Minecraft.getInstance();
+        if (minecraft.level == null || !ScopeUtil.current(minecraft).equals(record.scope())) {
+            return false;
+        }
+        BlockPos pos = record.pos();
+        Component name = Component.translatable("storagefinder.query.position", pos.getX(), pos.getY(), pos.getZ());
+        SearchSelection.Change change = SELECTION.togglePosition(record.scope(), pos, iconFor(record.block()), name);
+        if (minecraft.player != null && StorageFinderConfig.current().showMessages) {
+            minecraft.player.sendOverlayMessage(change.added()
+                    ? Component.translatable("storagefinder.selected.route_added", name)
+                    : Component.translatable("storagefinder.selected.removed", name));
+        }
+        LOCATOR.refresh(minecraft, SELECTION, INDEX);
+        return change.added();
+    }
+
+    private static ItemStack iconFor(String family) {
+        if (family == null) {
+            return new ItemStack(Items.CHEST);
+        }
+        if (family.equals(StorageBlocks.BARREL)) {
+            return new ItemStack(Items.BARREL);
+        }
+        if (family.equals(StorageBlocks.ENDER_CHEST)) {
+            return new ItemStack(Items.ENDER_CHEST);
+        }
+        if (family.startsWith("shulker:")) {
+            Identifier id = Identifier.tryParse(family.substring("shulker:".length()));
+            if (id != null) {
+                ItemStack stack = new ItemStack(BuiltInRegistries.ITEM.getValue(id));
+                if (!stack.isEmpty()) {
+                    return stack;
+                }
+            }
+            return new ItemStack(Items.SHULKER_BOX);
+        }
+        return new ItemStack(Items.CHEST);
+    }
+
+    private static void announceToggle(Minecraft minecraft, SearchSelection.Change change, Component displayName) {
+        if (minecraft.player == null || !StorageFinderConfig.current().showMessages) {
+            return;
+        }
+        minecraft.player.sendOverlayMessage(change.added()
+                ? Component.translatable("storagefinder.selected.added", displayName,
+                String.format("%06X", change.color() & 0xFFFFFF))
+                : Component.translatable("storagefinder.selected.removed", displayName));
     }
 
     public static Integer searchColor(ItemStack stack) {
@@ -291,49 +468,54 @@ public final class StorageFinderClient implements ClientModInitializer {
         return SELECTION.isPinned(stack);
     }
 
-    public static java.util.Map<String, Integer> nearbyItemStatistics() {
+    public static Map<String, Integer> nearbyItemStatistics() {
         Minecraft minecraft = Minecraft.getInstance();
         if (minecraft.player == null || minecraft.level == null) {
-            return java.util.Map.of();
+            return Map.of();
         }
-        java.util.Map<String, Integer> totals = new java.util.LinkedHashMap<>();
+        Map<String, Integer> totals = new LinkedHashMap<>();
         String scope = ScopeUtil.current(minecraft);
         BlockPos center = minecraft.player.blockPosition();
-        for (StorageIndex.Record record : INDEX.recordsInScope(scope)) {
-            BlockPos pos = record.pos();
+        for (IndexRecord record : INDEX.near(scope, center, StorageFinderConfig.current().searchRadiusChunks + 1)) {
+            BlockPos pos = StorageIndex.pos(record);
             if (StorageLocator.withinSearchRadius(center, pos)
-                    && minecraft.level.hasChunk(pos.getX() >> 4, pos.getZ() >> 4)
+                    && minecraft.level.hasChunk(record.chunkX(), record.chunkZ())
                     && StorageLocator.isStorage(minecraft, pos)) {
-                record.normalizedCounts().forEach((item, count) ->
-                        totals.merge(item, count, Integer::sum));
+                addStatistics(record, totals);
             }
         }
-        return java.util.Map.copyOf(totals);
+        return Map.copyOf(totals);
     }
 
-    public static java.util.Map<String, Integer> allKnownItemStatistics() {
+    public static Map<String, Integer> allKnownItemStatistics() {
         Minecraft minecraft = Minecraft.getInstance();
         if (minecraft.level == null) {
-            return java.util.Map.of();
+            return Map.of();
         }
-        java.util.Map<String, Integer> totals = new java.util.LinkedHashMap<>();
-        String scope = ScopeUtil.current(minecraft);
-        for (StorageIndex.Record record : INDEX.recordsInScope(scope)) {
-            record.normalizedCounts().forEach((item, count) ->
-                    totals.merge(item, count, Integer::sum));
-        }
-        return java.util.Map.copyOf(totals);
+        Map<String, Integer> totals = new LinkedHashMap<>();
+        INDEX.forEachInScope(ScopeUtil.current(minecraft), record -> addStatistics(record, totals));
+        return Map.copyOf(totals);
     }
 
-    public static java.util.List<IndexRecordView> indexRecords(boolean allScopes) {
+    private static void addStatistics(IndexRecord record, Map<String, Integer> totals) {
+        record.counts().forEach((item, count) -> {
+            if (!ItemKeys.isNameKey(item)) {
+                totals.merge(item, count, ItemKeys::addCounts);
+            }
+        });
+    }
+
+    public static List<IndexRecordView> indexRecords(boolean allScopes) {
         Minecraft minecraft = Minecraft.getInstance();
         String currentScope = minecraft.level == null ? "" : ScopeUtil.current(minecraft);
-        return INDEX.recordViews().stream()
-                .filter(record -> allScopes || currentScope.equals(record.scope()))
-                .map(record -> new IndexRecordView(record, recordPresence(minecraft, currentScope, record)))
-                .sorted(java.util.Comparator.comparingLong(
-                        (IndexRecordView view) -> view.record().updatedAt()).reversed())
-                .toList();
+        List<IndexRecordView> views = new ArrayList<>();
+        for (StorageIndex.RecordView record : INDEX.recordViews()) {
+            if (allScopes || currentScope.equals(record.scope())) {
+                views.add(new IndexRecordView(record, recordPresence(minecraft, currentScope, record)));
+            }
+        }
+        views.sort(Comparator.comparingLong((IndexRecordView view) -> view.record().updatedAt()).reversed());
+        return views;
     }
 
     public static boolean removeIndexRecord(String key) {
@@ -370,11 +552,11 @@ public final class StorageFinderClient implements ClientModInitializer {
         return StorageLocator.isStorage(minecraft, pos) ? RecordPresence.PRESENT : RecordPresence.MISSING;
     }
 
-    public static java.util.List<SearchSelection.Query> activeQueries() {
+    public static List<SearchSelection.Query> activeQueries() {
         return SELECTION.queries();
     }
 
-    public static java.util.Map<Integer, StorageLocator.QueryStats> queryStats() {
+    public static Map<Integer, StorageLocator.QueryStats> queryStats() {
         return LOCATOR.queryStats();
     }
 
@@ -384,23 +566,6 @@ public final class StorageFinderClient implements ClientModInitializer {
         LOCATOR.refresh(minecraft, SELECTION, INDEX);
         if (minecraft.player != null && StorageFinderConfig.current().showMessages) {
             minecraft.player.sendOverlayMessage(Component.translatable("storagefinder.selected.cleared"));
-        }
-    }
-
-    private static void dismissSearchesForStorage(Minecraft minecraft, String scope, BlockPos storage) {
-        Set<String> contents = INDEX.itemsAt(scope, storage);
-        if (contents.isEmpty()) {
-            return;
-        }
-        Set<Integer> matchedColors = new LinkedHashSet<>();
-        SELECTION.entries().forEach((itemKey, color) -> {
-            if (contents.contains(itemKey)) {
-                matchedColors.add(color);
-            }
-        });
-        int removed = SELECTION.removeColors(matchedColors);
-        if (removed > 0 && minecraft.player != null && StorageFinderConfig.current().showMessages) {
-            minecraft.player.sendOverlayMessage(Component.translatable("storagefinder.selected.completed", removed));
         }
     }
 

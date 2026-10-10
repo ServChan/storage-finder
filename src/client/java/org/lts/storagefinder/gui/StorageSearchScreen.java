@@ -7,19 +7,24 @@ import net.minecraft.client.gui.components.EditBox;
 import net.minecraft.client.gui.screens.Screen;
 import net.minecraft.client.input.KeyEvent;
 import net.minecraft.client.input.MouseButtonEvent;
+import net.minecraft.core.Holder;
 import net.minecraft.core.component.DataComponents;
 import net.minecraft.core.registries.BuiltInRegistries;
 import net.minecraft.core.registries.Registries;
 import net.minecraft.network.chat.Component;
+import net.minecraft.resources.Identifier;
+import net.minecraft.tags.TagKey;
 import net.minecraft.world.item.Item;
 import net.minecraft.world.item.ItemStack;
 import net.minecraft.world.item.Items;
 import net.minecraft.world.item.enchantment.ItemEnchantments;
+import org.lts.storagefinder.ItemKeys;
 import org.lts.storagefinder.SearchSelection;
 import org.lts.storagefinder.StorageFinderClient;
 
 import java.util.ArrayList;
 import java.util.Comparator;
+import java.util.LinkedHashSet;
 import java.util.List;
 import java.util.Locale;
 import java.util.Map;
@@ -95,7 +100,7 @@ public final class StorageSearchScreen extends Screen {
         for (int index = scroll; index < end; index++) {
             Suggestion suggestion = matches.get(index);
             int rowY = LIST_TOP + (index - scroll) * ROW_HEIGHT;
-            Integer searchColor = StorageFinderClient.searchColor(suggestion.stack());
+            Integer searchColor = colorOf(suggestion);
             boolean isSelected = index == selected;
             int background = isSelected ? UiTheme.ROW_SELECTED
                     : index == hovered ? UiTheme.ROW_HOVER
@@ -109,11 +114,11 @@ public final class StorageSearchScreen extends Screen {
             String countText = count > 0 ? Component.translatable("storagefinder.search.known_count", count).getString() : "";
             int countWidth = countText.isEmpty() ? 0 : this.font.width(countText) + 8;
             Component label = searchColor == null ? suggestion.label()
-                    : StorageFinderClient.isPinned(suggestion.stack())
+                    : suggestion.group() == null && StorageFinderClient.isPinned(suggestion.stack())
                     ? Component.translatable("storagefinder.search.pinned", suggestion.label())
                     : Component.translatable("storagefinder.search.active", suggestion.label());
             graphics.text(this.font, UiTheme.trim(this.font, label.getString(), fieldWidth - 30 - countWidth),
-                    fieldX + 24, rowY + 7, UiTheme.TEXT, false);
+                    fieldX + 24, rowY + 7, suggestion.group() == null ? UiTheme.TEXT : UiTheme.ACCENT, false);
             if (!countText.isEmpty()) {
                 graphics.text(this.font, countText, fieldX + fieldWidth - 6 - this.font.width(countText),
                         rowY + 7, UiTheme.SUCCESS, false);
@@ -124,9 +129,12 @@ public final class StorageSearchScreen extends Screen {
 
         int footerY = LIST_TOP + visibleRows * ROW_HEIGHT + 4;
         if (matches.isEmpty()) {
-            Component empty = searchBox.getValue().isBlank()
+            String typed = searchBox.getValue().strip();
+            Component empty = typed.isEmpty()
                     ? Component.translatable("storagefinder.search.empty_catalog")
-                    : Component.translatable("storagefinder.search.no_results", searchBox.getValue().strip());
+                    : typed.startsWith("#")
+                    ? Component.translatable("storagefinder.search.tag_unknown", typed)
+                    : Component.translatable("storagefinder.search.no_results", typed);
             graphics.textWithWordWrap(this.font, empty, fieldX, LIST_TOP + 6, fieldWidth, UiTheme.MUTED);
         } else {
             Component footer = Component.translatable("storagefinder.search.footer", matches.size());
@@ -142,7 +150,8 @@ public final class StorageSearchScreen extends Screen {
             choose(matches.get(index));
             return true;
         }
-        if (index >= 0 && event.button() == InputConstants.MOUSE_BUTTON_RIGHT) {
+        if (index >= 0 && event.button() == InputConstants.MOUSE_BUTTON_RIGHT
+                && matches.get(index).group() == null) {
             togglePin(matches.get(index));
             selected = index;
             return true;
@@ -180,7 +189,7 @@ public final class StorageSearchScreen extends Screen {
             }
             case InputConstants.KEY_RETURN, InputConstants.KEY_NUMPADENTER -> {
                 if (!matches.isEmpty()) {
-                    if (event.hasShiftDown()) {
+                    if (event.hasShiftDown() && matches.get(selected).group() == null) {
                         togglePin(matches.get(selected));
                     } else {
                         choose(matches.get(selected));
@@ -261,6 +270,59 @@ public final class StorageSearchScreen extends Screen {
         }).toList();
     }
 
+    private Suggestion groupSuggestion(String needle, List<Suggestion> itemMatches) {
+        if (needle.startsWith("#")) {
+            String tagName = needle.substring(1);
+            Identifier id = Identifier.tryParse(tagName.contains(":") ? tagName : "minecraft:" + tagName);
+            if (id == null) {
+                return null;
+            }
+            Set<String> keys = new LinkedHashSet<>();
+            ItemStack icon = ItemStack.EMPTY;
+            for (Holder<Item> holder : BuiltInRegistries.ITEM.getTagOrEmpty(TagKey.create(Registries.ITEM, id))) {
+                ItemStack stack = new ItemStack(holder.value());
+                if (icon.isEmpty()) {
+                    icon = stack;
+                }
+                keys.addAll(SearchSelection.itemIds(stack));
+            }
+            if (keys.isEmpty()) {
+                return null;
+            }
+            String groupId = "#" + id;
+            Component label = Component.translatable("storagefinder.search.group_tag", groupId, keys.size());
+            return groupRow(label, icon, groupId, keys, false, Component.literal(groupId));
+        }
+        if (needle.length() < 2) {
+            return null;
+        }
+        Set<String> keys = new LinkedHashSet<>();
+        for (Suggestion suggestion : itemMatches) {
+            keys.addAll(SearchSelection.itemIds(suggestion.stack()));
+        }
+        ItemStack icon = itemMatches.isEmpty() ? new ItemStack(Items.NAME_TAG) : itemMatches.getFirst().stack();
+        Component label = Component.translatable("storagefinder.search.group", needle, itemMatches.size());
+        return groupRow(label, icon, needle, keys, true,
+                Component.translatable("storagefinder.search.group_name", needle));
+    }
+
+    private Suggestion groupRow(Component label, ItemStack icon, String groupId, Set<String> keys,
+                                boolean customNames, Component queryName) {
+        int known = 0;
+        for (String key : keys) {
+            known = ItemKeys.addCounts(known, knownCounts.getOrDefault(key, 0));
+        }
+        String labelText = label.getString();
+        return new Suggestion(label, labelText, labelText.toLowerCase(Locale.ROOT), groupId, icon, groupId, known,
+                new Group(groupId, Set.copyOf(keys), customNames, queryName));
+    }
+
+    private Integer colorOf(Suggestion suggestion) {
+        return suggestion.group() == null
+                ? StorageFinderClient.searchColor(suggestion.stack())
+                : StorageFinderClient.groupColor(suggestion.group().id());
+    }
+
     private Suggestion suggestion(Component label, ItemStack stack, String id) {
         Set<String> keys = SearchSelection.itemIds(stack);
         int known = 0;
@@ -269,7 +331,7 @@ public final class StorageSearchScreen extends Screen {
         }
         String labelText = label.getString();
         return new Suggestion(label, labelText, labelText.toLowerCase(Locale.ROOT),
-                id.toLowerCase(Locale.ROOT), stack, id, known);
+                id.toLowerCase(Locale.ROOT), stack, id, known, null);
     }
 
     private void updateSuggestions(String query) {
@@ -281,13 +343,23 @@ public final class StorageSearchScreen extends Screen {
                 .thenComparingInt(suggestion -> suggestion.knownCount() > 0 ? 0 : 1)
                 .thenComparing(Comparator.comparingInt(Suggestion::knownCount).reversed())
                 .thenComparing(Suggestion::labelText, String.CASE_INSENSITIVE_ORDER);
-        matches = catalog.stream()
+        List<Suggestion> itemMatches = catalog.stream()
                 .filter(suggestion -> needle.isEmpty()
                         ? suggestion.knownCount() > 0 || StorageFinderClient.searchColor(suggestion.stack()) != null
                         : suggestion.lowerLabel().contains(needle) || suggestion.lowerId().contains(needle))
                 .sorted(order)
                 .toList();
-        selected = 0;
+        Suggestion group = needle.isEmpty() ? null : groupSuggestion(needle, itemMatches);
+        if (group == null) {
+            matches = itemMatches;
+            selected = 0;
+        } else {
+            List<Suggestion> combined = new ArrayList<>(itemMatches.size() + 1);
+            combined.add(group);
+            combined.addAll(itemMatches);
+            matches = List.copyOf(combined);
+            selected = itemMatches.isEmpty() ? 0 : 1;
+        }
         scroll = 0;
     }
 
@@ -314,7 +386,13 @@ public final class StorageSearchScreen extends Screen {
     }
 
     private void choose(Suggestion suggestion) {
-        StorageFinderClient.selectFromSearch(suggestion.stack(), suggestion.label());
+        if (suggestion.group() != null) {
+            Group group = suggestion.group();
+            StorageFinderClient.selectGroup(group.id(), suggestion.stack(), group.queryName(), group.keys(),
+                    group.customNames());
+        } else {
+            StorageFinderClient.selectFromSearch(suggestion.stack(), suggestion.label());
+        }
         closeScreen();
     }
 
@@ -323,6 +401,9 @@ public final class StorageSearchScreen extends Screen {
     }
 
     private record Suggestion(Component label, String labelText, String lowerLabel, String lowerId,
-                              ItemStack stack, String id, int knownCount) {
+                              ItemStack stack, String id, int knownCount, Group group) {
+    }
+
+    private record Group(String id, Set<String> keys, boolean customNames, Component queryName) {
     }
 }

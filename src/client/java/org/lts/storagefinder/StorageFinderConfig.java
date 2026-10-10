@@ -14,6 +14,11 @@ import java.nio.file.StandardCopyOption;
 public final class StorageFinderConfig {
     public static final int MAX_SEARCH_CHUNKS = 8;
     public static final int MAX_HUD_OFFSET = 1_000;
+    public static final String COMPLETE_ON_TAKE = "TAKEN";
+    public static final String COMPLETE_ON_OPEN = "OPENED";
+    public static final String COMPLETE_NEVER = "NEVER";
+    public static final java.util.List<String> COMPLETION_MODES =
+            java.util.List.of(COMPLETE_ON_TAKE, COMPLETE_ON_OPEN, COMPLETE_NEVER);
     private static final Gson GSON = new GsonBuilder().setPrettyPrinting().create();
     private static final Path PATH = FabricLoader.getInstance().getConfigDir().resolve("storage_finder.json");
     private static final Path BACKUP_PATH = PATH.resolveSibling("storage_finder.json.bak");
@@ -32,6 +37,8 @@ public final class StorageFinderConfig {
     public boolean routeAllowSwimming = true;
     public boolean routeThroughDoors = true;
     public boolean showMessages = true;
+    public boolean shulkerPreview = true;
+    public String searchCompletion = COMPLETE_ON_TAKE;
     public int routeMaxRoutes = 3;
     public int routeNodeBudget = 800;
     public int searchRadiusChunks = MAX_SEARCH_CHUNKS;
@@ -52,7 +59,7 @@ public final class StorageFinderConfig {
             primaryValid = true;
             lastModified = Files.getLastModifiedTime(PATH).toMillis();
         } catch (Exception exception) {
-            StorageFinderClient.LOGGER.warn("Could not load {}", PATH, exception);
+            StorageFinderClient.LOGGER.warn("Could not read {}; trying the backup", PATH, exception);
             primaryValid = false;
             instance = loadBackup();
             lastModified = modifiedTime();
@@ -135,6 +142,8 @@ public final class StorageFinderConfig {
         copy.routeAllowSwimming = routeAllowSwimming;
         copy.routeThroughDoors = routeThroughDoors;
         copy.showMessages = showMessages;
+        copy.shulkerPreview = shulkerPreview;
+        copy.searchCompletion = searchCompletion;
         copy.routeMaxRoutes = routeMaxRoutes;
         copy.routeNodeBudget = routeNodeBudget;
         copy.searchRadiusChunks = searchRadiusChunks;
@@ -162,6 +171,9 @@ public final class StorageFinderConfig {
                 .contains(config.hudAnchor)) {
             config.hudAnchor = "BOTTOM_RIGHT";
         }
+        if (!COMPLETION_MODES.contains(config.searchCompletion)) {
+            config.searchCompletion = COMPLETE_ON_TAKE;
+        }
         config.hudOffsetX = Math.max(0, Math.min(MAX_HUD_OFFSET, config.hudOffsetX));
         config.hudOffsetY = Math.max(0, Math.min(MAX_HUD_OFFSET, config.hudOffsetY));
         config.hudMaxVisible = Math.max(1, Math.min(12, config.hudMaxVisible));
@@ -186,7 +198,7 @@ public final class StorageFinderConfig {
         }
         try (Reader reader = Files.newBufferedReader(BACKUP_PATH)) {
             StorageFinderConfig recovered = sanitize(GSON.fromJson(reader, StorageFinderConfig.class));
-            StorageFinderClient.LOGGER.warn("Recovered configuration from {}", BACKUP_PATH);
+            StorageFinderClient.LOGGER.warn("Recovered the configuration from {}", BACKUP_PATH);
             try {
                 if (Files.isRegularFile(PATH)) {
                     Files.move(PATH, PATH.resolveSibling("storage_finder.json.corrupt"),
@@ -195,11 +207,11 @@ public final class StorageFinderConfig {
                 Files.copy(BACKUP_PATH, PATH, StandardCopyOption.REPLACE_EXISTING);
                 primaryValid = true;
             } catch (Exception exception) {
-                StorageFinderClient.LOGGER.warn("Could not restore primary configuration", exception);
+                StorageFinderClient.LOGGER.warn("Could not restore {} from the backup", PATH, exception);
             }
             return recovered;
         } catch (Exception exception) {
-            StorageFinderClient.LOGGER.warn("Could not recover configuration from {}", BACKUP_PATH, exception);
+            StorageFinderClient.LOGGER.warn("Could not recover the configuration from {}; using defaults", BACKUP_PATH, exception);
             StorageFinderConfig recovered = defaults();
             quarantineCorruptPrimary();
             save(recovered);
@@ -214,7 +226,7 @@ public final class StorageFinderConfig {
                         StandardCopyOption.REPLACE_EXISTING);
             }
         } catch (Exception exception) {
-            StorageFinderClient.LOGGER.warn("Could not quarantine corrupt configuration", exception);
+            StorageFinderClient.LOGGER.warn("Could not move the corrupt {} aside", PATH, exception);
         }
     }
 

@@ -1,0 +1,6 @@
+{
+  "key.category.storagefinder_macro.main": "Storage Finder: vista automática",
+  "key.storagefinder_macro.toggle": "Activar o desactivar la vista automática de almacenes",
+  "storagefinder_macro.enabled": "§aVista automática activada: §flos almacenes cercanos se leen al caminar",
+  "storagefinder_macro.disabled": "§eVista automática desactivada"
+}

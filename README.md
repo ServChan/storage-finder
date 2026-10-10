@@ -56,6 +56,16 @@ Client-side storage search: remembers the containers you open and items in frame
 
 Готовый JAR: `build/libs/storage-finder-1.2.0.jar`.
 
+### Macro-версия
+
+Та же сборка кладёт рядом `storage-finder-1.2.0-macro.jar` — обычный мод плюс автопросмотр: пока вы идёте мимо,
+мод по одному открывает видимые сундуки, бочки и шалкеры в зоне досягаемости, читает содержимое без экрана, не
+поворачивает камеру и закрывает меню через несколько тиков; звук открытия этих хранилищ приглушается. Хранилище
+перечитывается не чаще раза в 5 минут, ловушечные сундуки и эндер-сундук не трогаются, во время приседания, ЛКМ/ПКМ
+и при открытом меню автопросмотр ждёт. **F8** включает и выключает его, параметры — в
+`config/storage_finder_macro.json`. Ставьте только один из двух jar. Сервер видит обычные открытия сундуков, поэтому
+на публичных серверах это может считаться макросом — используйте обычную версию.
+
 ---
 
 ## English
@@ -105,6 +115,16 @@ Files: `config/storage_finder.json` (settings) and `config/storage_finder_index.
 ```
 
 Output JAR: `build/libs/storage-finder-1.2.0.jar`.
+
+### Macro edition
+
+The same build also writes `storage-finder-1.2.0-macro.jar`: the regular mod plus auto-peek. While you walk past,
+it opens visible chests, barrels and shulker boxes in reach one at a time, reads them without a screen or camera
+movement, and closes the menu a few ticks later; their open and close sounds are muted. Each storage is re-read at
+most once every 5 minutes, trapped chests and ender chests are skipped, and it waits while you sneak, hold
+attack/use or have a screen open. **F8** toggles it; settings live in `config/storage_finder_macro.json`. Install
+only one of the two jars. The server sees ordinary container opens, so public servers may treat this as a macro —
+use the standard edition there.
 
 ## Лицензия / License
 

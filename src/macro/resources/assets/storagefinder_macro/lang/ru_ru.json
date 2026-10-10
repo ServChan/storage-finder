@@ -1,0 +1,6 @@
+{
+  "key.category.storagefinder_macro.main": "Поиск хранилищ: автопросмотр",
+  "key.storagefinder_macro.toggle": "Включить или выключить автопросмотр хранилищ",
+  "storagefinder_macro.enabled": "§aАвтопросмотр включён: §fхранилища рядом читаются на ходу",
+  "storagefinder_macro.disabled": "§eАвтопросмотр выключен"
+}

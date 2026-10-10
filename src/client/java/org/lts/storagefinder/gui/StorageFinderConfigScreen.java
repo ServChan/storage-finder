@@ -13,6 +13,9 @@ import org.lts.storagefinder.StorageFinderClient;
 import org.lts.storagefinder.MinecraftUiAccess;
 import org.lts.storagefinder.StorageFinderConfig;
 
+import java.util.List;
+import java.util.Locale;
+
 public final class StorageFinderConfigScreen extends Screen {
     private static final SystemToast.SystemToastId SAVE_TOAST_ID = new SystemToast.SystemToastId();
     private final Screen parent;
@@ -52,6 +55,15 @@ public final class StorageFinderConfigScreen extends Screen {
                 () -> config.avoidHazards, value -> config.avoidHazards = value));
         addRenderableWidget(UiTheme.toggle(right, y, columnWidth, "storagefinder.config.messages",
                 () -> config.showMessages, value -> config.showMessages = value));
+        y += 24;
+        addRenderableWidget(UiTheme.toggle(left, y, columnWidth, "storagefinder.config.shulker_preview",
+                () -> config.shulkerPreview, value -> config.shulkerPreview = value));
+        addRenderableWidget(Button.builder(completionLabel(), button -> {
+            List<String> modes = StorageFinderConfig.COMPLETION_MODES;
+            config.searchCompletion = modes.get((modes.indexOf(config.searchCompletion) + 1) % modes.size());
+            button.setMessage(completionLabel());
+        }).bounds(right, y, columnWidth, UiTheme.BUTTON_HEIGHT)
+                .tooltip(Tooltip.create(Component.translatable("storagefinder.config.completion.tooltip"))).build());
         y += 28;
 
         StorageFinderConfig defaults = StorageFinderConfig.defaultsCopy();
@@ -132,6 +144,11 @@ public final class StorageFinderConfigScreen extends Screen {
                 Component.translatable("storagefinder.config.unsaved.message"),
                 Component.translatable("storagefinder.config.discard"),
                 Component.translatable("storagefinder.config.keep_editing")));
+    }
+
+    private Component completionLabel() {
+        return Component.translatable("storagefinder.config.completion", Component.translatable(
+                "storagefinder.config.completion." + config.searchCompletion.toLowerCase(Locale.ROOT)));
     }
 
     private Component radiusLabel() {

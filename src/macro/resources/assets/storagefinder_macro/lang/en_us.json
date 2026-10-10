@@ -1,0 +1,6 @@
+{
+  "key.category.storagefinder_macro.main": "Storage Finder: auto-peek",
+  "key.storagefinder_macro.toggle": "Toggle auto-peek of nearby storage",
+  "storagefinder_macro.enabled": "§aAuto-peek on: §fnearby storage is read while you walk",
+  "storagefinder_macro.disabled": "§eAuto-peek off"
+}

@@ -34,6 +34,7 @@ public final class StorageIndexScreen extends Screen {
     private int contentWidth;
     private Button scopeButton;
     private Button exportButton;
+    private Button routeButton;
     private Button deleteButton;
     private Button clearButton;
     private Button previousButton;
@@ -71,12 +72,17 @@ public final class StorageIndexScreen extends Screen {
         addRenderableWidget(searchBox);
 
         int actionY = height - 54;
+        int thirdWidth = (contentWidth - gap * 2) / 3;
+        routeButton = addRenderableWidget(Button.builder(
+                        Component.translatable("storagefinder.index_manager.route"), button -> routeToSelected())
+                .bounds(left, actionY, thirdWidth, 20)
+                .tooltip(Tooltip.create(Component.translatable("storagefinder.index_manager.route.tooltip"))).build());
         deleteButton = addRenderableWidget(Button.builder(
                         Component.translatable("storagefinder.index_manager.delete"), button -> deleteSelected())
-                .bounds(left, actionY, halfWidth, 20)
+                .bounds(left + thirdWidth + gap, actionY, thirdWidth, 20)
                 .tooltip(Tooltip.create(Component.translatable("storagefinder.index_manager.delete.tooltip"))).build());
         clearButton = addRenderableWidget(Button.builder(clearLabel(), button -> clearCurrentScope())
-                .bounds(left + halfWidth + gap, actionY, halfWidth, 20).build());
+                .bounds(left + (thirdWidth + gap) * 2, actionY, thirdWidth, 20).build());
 
         int bottomY = height - 30;
         int navigationWidth = (contentWidth - gap * 2) / 3;
@@ -143,9 +149,14 @@ public final class StorageIndexScreen extends Screen {
     public boolean mouseClicked(MouseButtonEvent event, boolean doubleClick) {
         int index = rowAt(event.x(), event.y());
         if (index >= 0 && event.button() == InputConstants.MOUSE_BUTTON_LEFT) {
-            selectedKey = filtered.get(index).record().key();
+            String clicked = filtered.get(index).record().key();
+            boolean again = clicked.equals(selectedKey);
+            selectedKey = clicked;
             confirmClear = false;
             updateButtons();
+            if (doubleClick && again) {
+                routeToSelected();
+            }
             return true;
         }
         return super.mouseClicked(event, doubleClick);
@@ -164,6 +175,11 @@ public final class StorageIndexScreen extends Screen {
     public boolean keyPressed(KeyEvent event) {
         if (event.key() == InputConstants.KEY_ESCAPE) {
             closeScreen();
+            return true;
+        }
+        if ((event.key() == InputConstants.KEY_RETURN || event.key() == InputConstants.KEY_NUMPADENTER)
+                && selectedKey != null && !searchBox.isFocused()) {
+            routeToSelected();
             return true;
         }
         if (event.key() == InputConstants.KEY_DELETE && selectedKey != null) {
@@ -247,6 +263,27 @@ public final class StorageIndexScreen extends Screen {
         });
     }
 
+    private StorageFinderClient.IndexRecordView selectedView() {
+        if (selectedKey == null) {
+            return null;
+        }
+        for (StorageFinderClient.IndexRecordView view : filtered) {
+            if (view.record().key().equals(selectedKey)) {
+                return view;
+            }
+        }
+        return null;
+    }
+
+    private void routeToSelected() {
+        StorageFinderClient.IndexRecordView view = selectedView();
+        if (view == null || view.presence() == StorageFinderClient.RecordPresence.OTHER_SCOPE) {
+            return;
+        }
+        StorageFinderClient.routeToRecord(view.record());
+        minecraft.setScreenAndShow(null);
+    }
+
     private void deleteSelected() {
         if (selectedKey == null) {
             return;
@@ -280,6 +317,10 @@ public final class StorageIndexScreen extends Screen {
     private void updateButtons() {
         if (deleteButton != null) {
             deleteButton.active = selectedKey != null;
+        }
+        if (routeButton != null) {
+            StorageFinderClient.IndexRecordView view = selectedView();
+            routeButton.active = view != null && view.presence() != StorageFinderClient.RecordPresence.OTHER_SCOPE;
         }
         if (clearButton != null) {
             clearButton.active = !allScopes && !records.isEmpty();

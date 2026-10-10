@@ -65,7 +65,7 @@ public final class EconomyPriceBridge {
         } catch (RuntimeException exception) {
             if (!failureLogged) {
                 failureLogged = true;
-                StorageFinderClient.LOGGER.warn("Economy price bridge lookup failed", exception);
+                StorageFinderClient.LOGGER.warn("Could not look up prices through the Economy bridge; prices are hidden until it reconnects", exception);
             }
             summary = Optional.empty();
         }
@@ -83,7 +83,7 @@ public final class EconomyPriceBridge {
             return;
         }
         if (!(candidate instanceof Function<?, ?> function)) {
-            StorageFinderClient.LOGGER.warn("Economy bridge {} has unsupported provider type {}",
+            StorageFinderClient.LOGGER.warn("Economy bridge {} has an unsupported provider type {}; prices are hidden",
                     API_KEY, candidate.getClass().getName());
             return;
         }

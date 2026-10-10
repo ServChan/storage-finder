@@ -3,6 +3,7 @@
   "minVersion": "0.8",
   "package": "org.lts.storagefinder.mixin",
   "compatibilityLevel": "JAVA_17",
-  "client": ["MultiPlayerGameModeMixin", "AbstractContainerScreenMixin", "ClientPacketListenerMixin"],
+  "client": ["MultiPlayerGameModeMixin", "AbstractContainerScreenMixin", "ClientPacketListenerMixin",
+    "ItemContainerContentsMixin"],
   "injectors": { "defaultRequire": 1 }
 }
