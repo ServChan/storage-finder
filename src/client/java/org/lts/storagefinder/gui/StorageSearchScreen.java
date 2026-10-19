@@ -145,6 +145,9 @@ public final class StorageSearchScreen extends Screen {
 
     @Override
     public boolean mouseClicked(MouseButtonEvent event, boolean doubleClick) {
+        if (getChildAt(event.x(), event.y()).isPresent()) {
+            return super.mouseClicked(event, doubleClick);
+        }
         int index = rowAt(event.x(), event.y());
         if (index >= 0 && event.button() == InputConstants.MOUSE_BUTTON_LEFT) {
             choose(matches.get(index));

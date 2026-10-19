@@ -60,6 +60,9 @@ public final class StorageHudLayoutScreen extends Screen {
 
     @Override
     public boolean mouseClicked(MouseButtonEvent event, boolean doubleClick) {
+        if (getChildAt(event.x(), event.y()).isPresent()) {
+            return super.mouseClicked(event, doubleClick);
+        }
         StorageHudRenderer.Bounds bounds = StorageHudRenderer.previewBounds(config, width, height);
         if (event.button() == InputConstants.MOUSE_BUTTON_LEFT && bounds.contains(event.x(), event.y())) {
             dragging = true;

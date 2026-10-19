@@ -147,6 +147,9 @@ public final class StorageIndexScreen extends Screen {
 
     @Override
     public boolean mouseClicked(MouseButtonEvent event, boolean doubleClick) {
+        if (getChildAt(event.x(), event.y()).isPresent()) {
+            return super.mouseClicked(event, doubleClick);
+        }
         int index = rowAt(event.x(), event.y());
         if (index >= 0 && event.button() == InputConstants.MOUSE_BUTTON_LEFT) {
             String clicked = filtered.get(index).record().key();
@@ -182,7 +185,7 @@ public final class StorageIndexScreen extends Screen {
             routeToSelected();
             return true;
         }
-        if (event.key() == InputConstants.KEY_DELETE && selectedKey != null) {
+        if (event.key() == InputConstants.KEY_DELETE && selectedKey != null && !isInputCaptured()) {
             deleteSelected();
             return true;
         }
