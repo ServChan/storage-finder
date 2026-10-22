@@ -166,7 +166,8 @@ public final class StorageHudRenderer {
         int textWidth = panelWidth - TEXT_LEFT - 6;
         String statusText = trimToWidth(font, status.text().getString(), textWidth * 2 / 5);
         int statusWidth = font.width(statusText);
-        String name = trimToWidth(font, row.name().getString(), textWidth - statusWidth - 6);
+        int arrowSpace = Double.isFinite(row.compassAngle()) ? 12 : 0;
+        String name = trimToWidth(font, row.name().getString(), textWidth - statusWidth - 6 - arrowSpace);
         graphics.text(font, name, x + TEXT_LEFT, rowY + 5, TEXT, true);
         graphics.text(font, statusText, x + panelWidth - 6 - statusWidth, rowY + 5, status.color(), true);
         if (Double.isFinite(row.compassAngle())) {

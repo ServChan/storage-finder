@@ -50,12 +50,12 @@ public final class StorageHudLayoutScreen extends Screen {
                 width / 2, centerY - 16, UiTheme.MUTED);
         graphics.centeredText(font, Component.translatable("storagefinder.hud_layout.keyboard_hint"),
                 width / 2, centerY - 4, UiTheme.MUTED);
-        super.extractRenderState(graphics, mouseX, mouseY, tickDelta);
-
         StorageHudRenderer.Bounds bounds = StorageHudRenderer.renderPreview(minecraft, graphics, config, width, height);
-        boolean hovered = bounds.contains(mouseX, mouseY);
+        boolean hovered = bounds.contains(mouseX, mouseY) && getChildAt(mouseX, mouseY).isEmpty();
         graphics.outline(bounds.x() - 1, bounds.y() - 1, bounds.width() + 2, bounds.height() + 2,
                 dragging ? UiTheme.TEXT : hovered ? UiTheme.FOCUS : UiTheme.ACCENT);
+
+        super.extractRenderState(graphics, mouseX, mouseY, tickDelta);
     }
 
     @Override
