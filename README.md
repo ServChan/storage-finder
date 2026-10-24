@@ -8,6 +8,8 @@
 
 Client-side storage search: remembers the containers you open and items in frames, highlights every match, draws collision-aware walking routes to them, and shows LTS_Server Economy prices in its HUD.
 
+**Руководство / User guide:** [Русский](docs/USER_GUIDE_RU.md) · [English](docs/USER_GUIDE_EN.md)
+
 ## Русский
 
 ### Что это
@@ -29,7 +31,7 @@ Client-side storage search: remembers the containers you open and items in frame
 
 | Действие | Клавиша по умолчанию | Переназначение |
 |---|---|---|
-| Найти предмет в руке / убрать его поиск | `Right Alt` | Options → Controls → Storage Finder |
+| Найти предмет в руке / убрать его поиск | `Right Alt` | Настройки → Управление → Storage Finder |
 | Открыть текстовый поиск | `Right Alt` с пустой рукой | та же клавиша |
 | Цены Economy в HUD | зажать `Left Alt` | — |
 
