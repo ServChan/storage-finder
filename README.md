@@ -1,3 +1,5 @@
+<p align="center"><img src="src/client/resources/assets/storagefinder/icon.png" width="96" alt="Storage Finder icon"></p>
+
 # Storage Finder
 
 [![Minecraft Version](https://img.shields.io/badge/Minecraft-26.3-brightgreen?style=flat-square&logo=minecraft)](README.md)
